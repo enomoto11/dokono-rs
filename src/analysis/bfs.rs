@@ -16,7 +16,7 @@
 //!    trait-dispatched callers. For non-trait symbols the call returns the same
 //!    position, so it is safe to do unconditionally.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use lsp_types::{DocumentSymbol, Location, Position};
 use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::path::{Path, PathBuf};

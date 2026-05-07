@@ -8,14 +8,14 @@
 //! removes the need for fixed sleeps and bounded retry counts when handling
 //! `-32801 ContentModified`.
 
-use anyhow::{bail, Context, Result};
-use serde::{de::DeserializeOwned, Serialize};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, bail};
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, BufWriter};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 

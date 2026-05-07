@@ -3,7 +3,7 @@ mod cli;
 mod git;
 mod lsp;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use lsp_types::{DocumentSymbol, DocumentSymbolResponse, Location, Position};
 use serde_json::json;

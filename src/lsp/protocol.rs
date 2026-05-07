@@ -1,7 +1,7 @@
 //! LSP base protocol framing: `Content-Length: N\r\n\r\n<json>`.
 //! `N` is the UTF-8 byte length of the JSON body, not its character count.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::io::{BufRead, Write};
 
 pub fn write_message<W: Write>(w: &mut W, body: &serde_json::Value) -> Result<()> {
