@@ -1,6 +1,6 @@
 [package]
 name = "dokono-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Detect which binary entrypoints in a Rust workspace are affected by code changes, without building, by driving rust-analyzer over LSP."
 license = "MIT"
