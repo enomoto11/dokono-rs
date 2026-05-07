@@ -1,7 +1,7 @@
 //! Run `git diff --unified=0` and extract changed `.rs` files plus their new-side line numbers.
 //! Line numbers are **1-based** (git convention); LSP is 0-based, so callers convert.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

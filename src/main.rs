@@ -1,8 +1,9 @@
 mod analysis;
 mod cli;
+mod git;
 mod lsp;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use lsp_types::{DocumentSymbol, DocumentSymbolResponse, Location, Position};
 use serde_json::json;
@@ -10,48 +11,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use url::Url;
 
-use std::process::Command as ProcCommand;
-
 use analysis::bfs::LspBackend;
 use cli::{Cli, Command, DebugCmd};
-
-fn fetch_pr(workspace: &Path, pr: u32, local_ref: &str) -> Result<()> {
-    let refspec = format!("pull/{pr}/head:{local_ref}");
-    let status = ProcCommand::new("git")
-        .arg("-C")
-        .arg(workspace)
-        .args(["fetch", "origin"])
-        .arg(&refspec)
-        .status()
-        .with_context(|| format!("failed to spawn git fetch for PR #{pr}"))?;
-    if !status.success() {
-        anyhow::bail!("git fetch origin {refspec} failed (status {status})");
-    }
-    Ok(())
-}
-
-fn git_merge_base(workspace: &Path, a: &str, b: &str) -> Result<String> {
-    let output = ProcCommand::new("git")
-        .arg("-C")
-        .arg(workspace)
-        .args(["merge-base", a, b])
-        .output()
-        .context("failed to spawn git merge-base")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "git merge-base {a} {b} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim(),
-        );
-    }
-    let sha = String::from_utf8(output.stdout)
-        .context("git merge-base output not UTF-8")?
-        .trim()
-        .to_string();
-    if sha.is_empty() {
-        anyhow::bail!("git merge-base returned empty result for {a} and {b}");
-    }
-    Ok(sha)
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -70,8 +31,8 @@ fn run_default(cli: Cli) -> Result<()> {
 
     let (base, head) = if let Some(pr) = cli.pr {
         let local_ref = format!("dokono-pr-{pr}");
-        fetch_pr(&workspace, pr, &local_ref)?;
-        let mb = git_merge_base(&workspace, &cli.base, &local_ref)?;
+        git::fetch_pr(&workspace, pr, &local_ref)?;
+        let mb = git::merge_base(&workspace, &cli.base, &local_ref)?;
         eprintln!(
             "pr #{pr}: head={local_ref} base={mb} (merge-base of {})",
             cli.base

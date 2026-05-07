@@ -1,7 +1,7 @@
 //! `initialize` → `initialized` and `shutdown` → `exit` LSP lifecycle helpers.
 
-use anyhow::{Context, Result, anyhow};
-use serde_json::{Value, json};
+use anyhow::{anyhow, Context, Result};
+use serde_json::{json, Value};
 use std::path::Path;
 use url::Url;
 
