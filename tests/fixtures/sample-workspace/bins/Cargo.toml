@@ -1,0 +1,8 @@
+[package]
+name = "bins"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+domain = { path = "../domain" }
+app = { path = "../app" }
