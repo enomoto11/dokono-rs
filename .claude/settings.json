@@ -1,0 +1,84 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"additionalContext\": \"## Project Context\\nBranch: '$(git branch --show-current 2>/dev/null || echo 'N/A')'\\nRust toolchain: '$(rustc --version 2>/dev/null || echo 'not found')'\\nLast commit: '$(git log --oneline -1 2>/dev/null || echo 'no commits')'\\nDirty files: '$(git diff --name-only 2>/dev/null | head -5 | tr \"\\n\" \", \" || echo 'none')'\\nTODOs: '$(grep -rn \"TODO\\|FIXME\\|HACK\\|XXX\" src/ 2>/dev/null | wc -l | tr -d \" \")' found\"}'"
+          }
+        ]
+      }
+    ],
+
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "INPUT=$(cat); CMD=$(echo \"$INPUT\" | jq -r '.tool_input.command // empty'); if echo \"$CMD\" | grep -qE 'cargo publish|rm -rf target/|git push.*--force|git reset --hard'; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked: destructive or publish command. Confirm intent explicitly.\"}}'; fi; exit 0"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "INPUT=$(cat); FILE=$(echo \"$INPUT\" | jq -r '.tool_input.file_path // empty'); if echo \"$FILE\" | grep -qE '(Cargo\\.lock|rust-toolchain\\.toml|\\.github/workflows/)'; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"Protected file: '\"$FILE\"'. Confirm?\"}}'; fi; exit 0"
+          }
+        ]
+      }
+    ],
+
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/rust-auto-fmt.sh",
+            "timeout": 30000
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "INPUT=$(cat); FILE=$(echo \"$INPUT\" | jq -r '.tool_input.file_path // empty'); if echo \"$FILE\" | grep -qE 'Cargo\\.toml$'; then cd \"$(echo \"$INPUT\" | jq -r '.cwd // \".\"')\" && cargo check 2>&1 | tail -5 >&2; fi; exit 0",
+            "timeout": 60000
+          }
+        ]
+      }
+    ],
+
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/rust-stop-gate.sh",
+            "timeout": 120000
+          }
+        ]
+      }
+    ],
+
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "MSG=$(cat | jq -r '.message // \"Claude Code needs attention\"'); if command -v osascript >/dev/null 2>&1; then osascript -e \"display notification \\\"$MSG\\\" with title \\\"Claude Code\\\"\"; elif command -v notify-send >/dev/null 2>&1; then notify-send 'Claude Code' \"$MSG\"; fi; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
