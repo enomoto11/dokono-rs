@@ -90,7 +90,7 @@ pub fn run(
         let canonicals = backend.declarations_batch(&nodes)?;
 
         let mut canonical_to_query: Vec<(PathBuf, Position)> = Vec::with_capacity(nodes.len());
-        for (orig, canon) in nodes.iter().zip(canonicals.into_iter()) {
+        for (orig, canon) in nodes.iter().zip(canonicals) {
             if (canon.0.as_path(), canon.1) == (orig.0.as_path(), orig.1) {
                 canonical_to_query.push(canon);
                 continue;
@@ -137,7 +137,7 @@ pub fn run(
                 backend.open(f)?;
             }
             let symbols_vec = backend.document_symbols_batch(&to_query)?;
-            for (f, s) in to_query.into_iter().zip(symbols_vec.into_iter()) {
+            for (f, s) in to_query.into_iter().zip(symbols_vec) {
                 symbol_cache.insert(f, s);
             }
         }
