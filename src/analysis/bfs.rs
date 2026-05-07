@@ -1,5 +1,5 @@
-//! BFS over `references` + `documentSymbol` + `declaration` to find which binary
-//! entrypoints are reachable from the changed symbols.
+//! Wave-based BFS over `references` + `documentSymbol` + `declaration` to find
+//! which binary entrypoints are reachable from the changed symbols.
 //!
 //! Two non-obvious LSP details drive the design:
 //!
@@ -15,10 +15,14 @@
 //!    redirects to the trait method declaration, where `references` does pick up
 //!    trait-dispatched callers. For non-trait symbols the call returns the same
 //!    position, so it is safe to do unconditionally.
+//!
+//! Each wave dispatches one batch per LSP method (declarations, references,
+//! documentSymbol) so rust-analyzer can overlap them on its thread pool;
+//! sequential `pop_front` would serialize on RTT.
 
 use anyhow::{Result, anyhow};
 use lsp_types::{DocumentSymbol, Location, Position};
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::symbols;
@@ -33,6 +37,21 @@ pub trait LspBackend {
     /// References to the symbol at `file:pos` (`includeDeclaration: false`).
     fn references(&mut self, file: &Path, pos: Position) -> Result<Vec<Location>>;
     fn document_symbols(&mut self, file: &Path) -> Result<Vec<DocumentSymbol>>;
+
+    fn declarations_batch(
+        &mut self,
+        items: &[(PathBuf, Position)],
+    ) -> Result<Vec<(PathBuf, Position)>> {
+        items.iter().map(|(f, p)| self.declaration(f, *p)).collect()
+    }
+
+    fn references_batch(&mut self, items: &[(PathBuf, Position)]) -> Result<Vec<Vec<Location>>> {
+        items.iter().map(|(f, p)| self.references(f, *p)).collect()
+    }
+
+    fn document_symbols_batch(&mut self, files: &[PathBuf]) -> Result<Vec<Vec<DocumentSymbol>>> {
+        files.iter().map(|f| self.document_symbols(f)).collect()
+    }
 }
 
 pub fn run(
@@ -42,85 +61,128 @@ pub fn run(
 ) -> Result<BTreeSet<PathBuf>> {
     let verbose = std::env::var_os("DOKONO_VERBOSE").is_some();
 
-    let mut queue: VecDeque<(PathBuf, Position)> = starts.into();
+    let mut frontier: Vec<(PathBuf, Position)> = starts;
     let mut visited: HashSet<(PathBuf, Position)> = HashSet::new();
     let mut affected: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut symbol_cache: HashMap<PathBuf, Vec<DocumentSymbol>> = HashMap::new();
 
-    while let Some((file, pos)) = queue.pop_front() {
-        if !visited.insert((file.clone(), pos)) {
-            continue;
+    while !frontier.is_empty() {
+        let mut nodes: Vec<(PathBuf, Position)> = Vec::with_capacity(frontier.len());
+        for n in frontier.drain(..) {
+            if visited.insert(n.clone()) {
+                nodes.push(n);
+            }
         }
+        if nodes.is_empty() {
+            break;
+        }
+
         if verbose {
-            eprintln!(
-                "[bfs] visit {} @ ({},{})",
-                file.display(),
-                pos.line,
-                pos.character
-            );
+            for (f, p) in &nodes {
+                eprintln!("[bfs] visit {} @ ({},{})", f.display(), p.line, p.character);
+            }
         }
-        backend.open(&file)?;
 
-        // Normalize impl-method positions to their trait-method declaration so that
-        // `references` picks up `dyn Trait` callers; for non-trait symbols this is a no-op.
-        let (canon_file, canon_pos) = backend.declaration(&file, pos)?;
-        let (file, pos) = if (canon_file.as_path(), canon_pos) == (file.as_path(), pos) {
-            (file, pos)
-        } else {
-            if !visited.insert((canon_file.clone(), canon_pos)) {
+        for (file, _) in &nodes {
+            backend.open(file)?;
+        }
+
+        let canonicals = backend.declarations_batch(&nodes)?;
+
+        let mut canonical_to_query: Vec<(PathBuf, Position)> = Vec::with_capacity(nodes.len());
+        for (orig, canon) in nodes.iter().zip(canonicals) {
+            if (canon.0.as_path(), canon.1) == (orig.0.as_path(), orig.1) {
+                canonical_to_query.push(canon);
                 continue;
             }
-            backend.open(&canon_file)?;
+            if !visited.insert(canon.clone()) {
+                continue;
+            }
+            backend.open(&canon.0)?;
             if verbose {
                 eprintln!(
                     "[bfs]   canonicalized → {} @ ({},{}) (trait method)",
-                    canon_file.display(),
-                    canon_pos.line,
-                    canon_pos.character
+                    canon.0.display(),
+                    canon.1.line,
+                    canon.1.character
                 );
             }
-            (canon_file, canon_pos)
-        };
+            canonical_to_query.push(canon);
+        }
 
-        let refs = backend.references(&file, pos)?;
+        if canonical_to_query.is_empty() {
+            continue;
+        }
 
-        for r in refs {
-            let ref_file = url_to_path(&r.uri)?;
-            if entrypoints.contains(&ref_file) {
-                if verbose {
-                    eprintln!("[bfs]   ref → entrypoint {}", ref_file.display());
+        let all_refs = backend.references_batch(&canonical_to_query)?;
+
+        let mut to_query: Vec<PathBuf> = Vec::new();
+        let mut seen: HashSet<PathBuf> = HashSet::new();
+        for refs in &all_refs {
+            for r in refs {
+                let ref_file = url_to_path(&r.uri)?;
+                if entrypoints.contains(&ref_file) {
+                    continue;
                 }
-                affected.insert(ref_file);
-                continue;
-            }
-            // Walk to the enclosing function so the next BFS step asks "who calls
-            // this caller", not "who else uses the same callee".
-            backend.open(&ref_file)?;
-            let symbols = backend.document_symbols(&ref_file)?;
-            // pick_at_lines takes 1-based git line numbers; r.range.start.line is 0-based.
-            let hits = symbols::pick_at_lines(&symbols, &[r.range.start.line + 1]);
-            if hits.is_empty() {
-                if verbose {
-                    eprintln!(
-                        "[bfs]   ref {}:{} has no enclosing symbol — skipped",
-                        ref_file.display(),
-                        r.range.start.line
-                    );
+                if symbol_cache.contains_key(&ref_file) {
+                    continue;
                 }
-                continue;
-            }
-            for hit in hits {
-                if verbose {
-                    eprintln!(
-                        "[bfs]   ref → {} :: {} @ ({},{})",
-                        ref_file.display(),
-                        hit.name,
-                        hit.position.line,
-                        hit.position.character
-                    );
+                if seen.insert(ref_file.clone()) {
+                    to_query.push(ref_file);
                 }
-                queue.push_back((ref_file.clone(), hit.position));
             }
         }
+        if !to_query.is_empty() {
+            for f in &to_query {
+                backend.open(f)?;
+            }
+            let symbols_vec = backend.document_symbols_batch(&to_query)?;
+            for (f, s) in to_query.into_iter().zip(symbols_vec) {
+                symbol_cache.insert(f, s);
+            }
+        }
+
+        let mut next: Vec<(PathBuf, Position)> = Vec::new();
+        for refs in all_refs {
+            for r in refs {
+                let ref_file = url_to_path(&r.uri)?;
+                if entrypoints.contains(&ref_file) {
+                    if verbose {
+                        eprintln!("[bfs]   ref → entrypoint {}", ref_file.display());
+                    }
+                    affected.insert(ref_file);
+                    continue;
+                }
+                let syms = symbol_cache
+                    .get(&ref_file)
+                    .expect("symbol_cache primed in pre-pass");
+                // pick_at_lines takes 1-based git line numbers; r.range.start.line is 0-based.
+                let hits = symbols::pick_at_lines(syms, &[r.range.start.line + 1]);
+                if hits.is_empty() {
+                    if verbose {
+                        eprintln!(
+                            "[bfs]   ref {}:{} has no enclosing symbol — skipped",
+                            ref_file.display(),
+                            r.range.start.line
+                        );
+                    }
+                    continue;
+                }
+                for hit in hits {
+                    if verbose {
+                        eprintln!(
+                            "[bfs]   ref → {} :: {} @ ({},{})",
+                            ref_file.display(),
+                            hit.name,
+                            hit.position.line,
+                            hit.position.character
+                        );
+                    }
+                    next.push((ref_file.clone(), hit.position));
+                }
+            }
+        }
+        frontier = next;
     }
     Ok(affected)
 }

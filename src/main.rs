@@ -167,144 +167,200 @@ impl analysis::bfs::LspBackend for ClientBackend<'_> {
     }
 
     fn references(&mut self, file: &Path, pos: Position) -> Result<Vec<Location>> {
-        let uri = Url::from_file_path(file)
-            .map_err(|_| anyhow!("not absolute path: {}", file.display()))?;
-        let result: Result<Option<Vec<Location>>> = self.client.request(
-            "textDocument/references",
-            json!({
-                "textDocument": { "uri": uri },
-                "position": { "line": pos.line, "character": pos.character },
-                "context": { "includeDeclaration": false }
-            }),
-        );
-        match result {
-            Ok(opt) => {
-                // Drop external paths. rust-analyzer's `references` can return locations
-                // outside the workspace (observed >7000 on large workspaces), which would
-                // explode the BFS queue and trigger downstream `-32603` panics on querying
-                // them. Entrypoints live in the workspace, so external locations cannot
-                // reach a bin anyway.
-                let workspace_root = self.workspace_root.clone();
-                let locations: Vec<Location> = opt
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|loc| {
-                        let path = match loc.uri.to_file_path() {
-                            Ok(p) => p,
-                            Err(_) => return false,
-                        };
-                        if path.starts_with(&workspace_root) {
-                            true
-                        } else {
-                            log_external("references", &path, loc.range.start);
-                            false
-                        }
-                    })
-                    .collect();
-                Ok(locations)
-            }
-            Err(e) if is_lsp_internal_error(&e) => {
-                warn_skip(
-                    "references",
-                    format_args!("{}:{},{}", file.display(), pos.line, pos.character),
-                    &e,
-                );
-                Ok(Vec::new())
-            }
-            Err(e) => Err(e),
-        }
+        let mut v = self.references_batch(&[(file.to_path_buf(), pos)])?;
+        Ok(v.pop().expect("one in, one out"))
     }
 
     fn declaration(&mut self, file: &Path, pos: Position) -> Result<(PathBuf, Position)> {
-        let uri = Url::from_file_path(file)
-            .map_err(|_| anyhow!("not absolute path: {}", file.display()))?;
-        // Response is Location | Location[] | LocationLink[] | null per LSP spec; tolerate all.
-        let result: Result<serde_json::Value> = self.client.request(
-            "textDocument/declaration",
-            json!({
-                "textDocument": { "uri": uri },
-                "position": { "line": pos.line, "character": pos.character }
-            }),
-        );
-        let response = match result {
-            Ok(v) => v,
-            Err(e) if is_lsp_internal_error(&e) => {
-                warn_skip(
-                    "declaration",
-                    format_args!("{}:{},{}", file.display(), pos.line, pos.character),
-                    &e,
-                );
-                return Ok((file.to_path_buf(), pos));
-            }
-            Err(e) => return Err(e),
-        };
-        let first_loc = response.as_array().and_then(|arr| arr.first()).cloned();
-        let loc_value = first_loc.unwrap_or(response);
-        if loc_value.is_null() {
-            return Ok((file.to_path_buf(), pos));
-        }
-        let target_uri = loc_value
-            .get("uri")
-            .or_else(|| loc_value.get("targetUri"))
-            .and_then(|v| v.as_str());
-        let range = loc_value
-            .get("range")
-            .or_else(|| loc_value.get("targetSelectionRange"));
-        let (Some(uri_str), Some(range)) = (target_uri, range) else {
-            return Ok((file.to_path_buf(), pos));
-        };
-        let target_path = Url::parse(uri_str)
-            .ok()
-            .and_then(|u| u.to_file_path().ok())
-            .unwrap_or_else(|| file.to_path_buf());
-        let target_pos = Position {
-            line: range
-                .get("start")
-                .and_then(|s| s.get("line"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(pos.line as u64) as u32,
-            character: range
-                .get("start")
-                .and_then(|s| s.get("character"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or(pos.character as u64) as u32,
-        };
-        if !target_path.starts_with(&self.workspace_root) {
-            // Declaration jumped outside the workspace (e.g., impl method → std trait method).
-            // Don't follow it; fall back to the original position so BFS stays bounded.
-            log_external("declaration", &target_path, target_pos);
-            return Ok((file.to_path_buf(), pos));
-        }
-        Ok((target_path, target_pos))
+        let mut v = self.declarations_batch(&[(file.to_path_buf(), pos)])?;
+        Ok(v.pop().expect("one in, one out"))
     }
 
     fn document_symbols(&mut self, file: &Path) -> Result<Vec<DocumentSymbol>> {
-        let uri = Url::from_file_path(file)
-            .map_err(|_| anyhow!("not absolute path: {}", file.display()))?;
-        let result: Result<Option<DocumentSymbolResponse>> = self.client.request(
-            "textDocument/documentSymbol",
-            json!({ "textDocument": { "uri": uri } }),
-        );
-        let response = match result {
-            Ok(r) => r,
-            Err(e) if is_lsp_internal_error(&e) => {
-                warn_skip("documentSymbol", file.display(), &e);
-                return Ok(Vec::new());
-            }
-            Err(e) => return Err(e),
-        };
-        match response {
-            Some(DocumentSymbolResponse::Nested(s)) => Ok(s),
-            // `DocumentSymbolResponse` is `#[serde(untagged)]` and lists `Flat` first, so an
-            // empty `[]` deserializes as `Flat(vec![])` even when we declared
-            // hierarchicalDocumentSymbolSupport. Treat it as "no symbols".
-            Some(DocumentSymbolResponse::Flat(s)) if s.is_empty() => Ok(Vec::new()),
-            Some(DocumentSymbolResponse::Flat(_)) => Err(anyhow!(
-                "server returned non-empty flat document symbols for {} (unsupported)",
-                file.display()
-            )),
-            None => Ok(Vec::new()),
+        let mut v = self.document_symbols_batch(&[file.to_path_buf()])?;
+        Ok(v.pop().expect("one in, one out"))
+    }
+
+    fn references_batch(&mut self, items: &[(PathBuf, Position)]) -> Result<Vec<Vec<Location>>> {
+        let mut pendings = Vec::with_capacity(items.len());
+        for (file, pos) in items {
+            let uri = Url::from_file_path(file)
+                .map_err(|_| anyhow!("not absolute path: {}", file.display()))?;
+            pendings.push(self.client.request_async(
+                "textDocument/references",
+                json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": pos.line, "character": pos.character },
+                    "context": { "includeDeclaration": false }
+                }),
+            )?);
         }
+        let workspace_root = self.workspace_root.clone();
+        let mut out = Vec::with_capacity(items.len());
+        for ((file, pos), pending) in items.iter().zip(pendings) {
+            let res: Result<Option<Vec<Location>>> = pending.wait();
+            match res {
+                Ok(opt) => out.push(filter_workspace_locations(
+                    opt.unwrap_or_default(),
+                    &workspace_root,
+                )),
+                Err(e) if is_lsp_internal_error(&e) => {
+                    warn_skip(
+                        "references",
+                        format_args!("{}:{},{}", file.display(), pos.line, pos.character),
+                        &e,
+                    );
+                    out.push(Vec::new());
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(out)
+    }
+
+    fn declarations_batch(
+        &mut self,
+        items: &[(PathBuf, Position)],
+    ) -> Result<Vec<(PathBuf, Position)>> {
+        let mut pendings = Vec::with_capacity(items.len());
+        for (file, pos) in items {
+            let uri = Url::from_file_path(file)
+                .map_err(|_| anyhow!("not absolute path: {}", file.display()))?;
+            pendings.push(self.client.request_async(
+                "textDocument/declaration",
+                json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": pos.line, "character": pos.character }
+                }),
+            )?);
+        }
+        let mut out = Vec::with_capacity(items.len());
+        for ((file, pos), pending) in items.iter().zip(pendings) {
+            let res: Result<serde_json::Value> = pending.wait();
+            match res {
+                Ok(value) => out.push(parse_declaration(value, file, *pos, &self.workspace_root)),
+                Err(e) if is_lsp_internal_error(&e) => {
+                    warn_skip(
+                        "declaration",
+                        format_args!("{}:{},{}", file.display(), pos.line, pos.character),
+                        &e,
+                    );
+                    out.push((file.clone(), *pos));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(out)
+    }
+
+    fn document_symbols_batch(&mut self, files: &[PathBuf]) -> Result<Vec<Vec<DocumentSymbol>>> {
+        let mut pendings = Vec::with_capacity(files.len());
+        for file in files {
+            let uri = Url::from_file_path(file)
+                .map_err(|_| anyhow!("not absolute path: {}", file.display()))?;
+            pendings.push(self.client.request_async(
+                "textDocument/documentSymbol",
+                json!({ "textDocument": { "uri": uri } }),
+            )?);
+        }
+        let mut out = Vec::with_capacity(files.len());
+        for (file, pending) in files.iter().zip(pendings) {
+            let res: Result<Option<DocumentSymbolResponse>> = pending.wait();
+            match res {
+                Ok(response) => out.push(parse_document_symbols(response, file)?),
+                Err(e) if is_lsp_internal_error(&e) => {
+                    warn_skip("documentSymbol", file.display(), &e);
+                    out.push(Vec::new());
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// rust-analyzer's `references` can return locations outside the workspace
+/// (observed >7000 on large workspaces), which explode the BFS queue and
+/// trigger downstream `-32603` panics. Entrypoints live in the workspace, so
+/// external locations cannot reach a bin anyway.
+fn filter_workspace_locations(locs: Vec<Location>, workspace_root: &Path) -> Vec<Location> {
+    locs.into_iter()
+        .filter(|loc| {
+            let path = match loc.uri.to_file_path() {
+                Ok(p) => p,
+                Err(_) => return false,
+            };
+            if path.starts_with(workspace_root) {
+                true
+            } else {
+                log_external("references", &path, loc.range.start);
+                false
+            }
+        })
+        .collect()
+}
+
+/// LSP `declaration` response is `Location | Location[] | LocationLink[] | null`;
+/// returns the original `(file, pos)` if anything is missing or external.
+fn parse_declaration(
+    response: serde_json::Value,
+    file: &Path,
+    pos: Position,
+    workspace_root: &Path,
+) -> (PathBuf, Position) {
+    let first_loc = response.as_array().and_then(|arr| arr.first()).cloned();
+    let loc_value = first_loc.unwrap_or(response);
+    if loc_value.is_null() {
+        return (file.to_path_buf(), pos);
+    }
+    let target_uri = loc_value
+        .get("uri")
+        .or_else(|| loc_value.get("targetUri"))
+        .and_then(|v| v.as_str());
+    let range = loc_value
+        .get("range")
+        .or_else(|| loc_value.get("targetSelectionRange"));
+    let (Some(uri_str), Some(range)) = (target_uri, range) else {
+        return (file.to_path_buf(), pos);
+    };
+    let target_path = Url::parse(uri_str)
+        .ok()
+        .and_then(|u| u.to_file_path().ok())
+        .unwrap_or_else(|| file.to_path_buf());
+    let target_pos = Position {
+        line: range
+            .get("start")
+            .and_then(|s| s.get("line"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(pos.line as u64) as u32,
+        character: range
+            .get("start")
+            .and_then(|s| s.get("character"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(pos.character as u64) as u32,
+    };
+    if !target_path.starts_with(workspace_root) {
+        log_external("declaration", &target_path, target_pos);
+        return (file.to_path_buf(), pos);
+    }
+    (target_path, target_pos)
+}
+
+/// `DocumentSymbolResponse` is `#[serde(untagged)]` and lists `Flat` first, so
+/// an empty `[]` deserializes as `Flat(vec![])` even when
+/// hierarchicalDocumentSymbolSupport is declared. Treat it as no symbols.
+fn parse_document_symbols(
+    response: Option<DocumentSymbolResponse>,
+    file: &Path,
+) -> Result<Vec<DocumentSymbol>> {
+    match response {
+        Some(DocumentSymbolResponse::Nested(s)) => Ok(s),
+        Some(DocumentSymbolResponse::Flat(s)) if s.is_empty() => Ok(Vec::new()),
+        Some(DocumentSymbolResponse::Flat(_)) => Err(anyhow!(
+            "server returned non-empty flat document symbols for {} (unsupported)",
+            file.display()
+        )),
+        None => Ok(Vec::new()),
     }
 }
 
