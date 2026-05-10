@@ -146,6 +146,12 @@ dokono-rs --workspace /path/to/your-workspace --head my-feature-branch
 
 ### Output
 
+Two output formats are supported, selected with `--format` (default: `text`).
+
+#### `--format text` (human-friendly)
+
+Result on **stdout**:
+
 ```
 Affected entrypoints:
   services/src/bin/api.rs
@@ -155,9 +161,53 @@ Affected entrypoints:
 - Paths are relative to the workspace root.
 - Order is deterministic (sorted via `BTreeSet`).
 - When nothing is affected: `Affected entrypoints: none`.
-- Exit code is `0` on success, non-zero on error.
 
-Progress messages (rust-analyzer spawn, indexing wait, shutdown) go to **stderr**, so parsing stdout is safe.
+Progress on **stderr** adapts to whether stderr is a TTY:
+
+- **TTY (interactive)**: an animated spinner with phase messages (`indexing workspace ...`, `tracing references (BFS) ...`, etc.). The spinner is cleared before the final stdout print.
+- **Non-TTY (piped, redirected, CI logs)**: one plain log line per phase, suitable for `tee` / `grep`.
+
+Either way, **stdout never contains progress noise**, so parsing stdout is safe.
+
+#### `--format json` (CI / scripting)
+
+A single JSON object on **stdout**, completely silent on **stderr** (apart from hard errors via `anyhow`). Suitable for piping into `jq`:
+
+```bash
+dokono-rs --workspace . --pr 1062 --format json
+```
+
+```json
+{
+  "schema_version": 1,
+  "pr": 1062,
+  "base": "abc123def456...",
+  "head": "dokono-pr-1062",
+  "status": "ok",
+  "affected": [
+    "services/src/bin/api.rs",
+    "services/src/bin/worker.rs"
+  ]
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `schema_version` | int | currently `1`. Bumped on incompatible schema changes. |
+| `pr` | int \| null | PR number when invoked with `--pr`, otherwise `null`. |
+| `base` / `head` | string | git refs as resolved by `dokono-rs` (in `--pr` mode `base` is the merge-base SHA and `head` is the local fetched ref). |
+| `status` | enum | `ok` \| `no_rs_changes` \| `no_symbol_changes` |
+| `affected` | string[] | workspace-relative paths, sorted. Empty unless `status == "ok"`. |
+
+Example CI snippet:
+
+```bash
+# Fail the job iff a specific bin is impacted
+affected=$(dokono-rs --workspace . --pr "$PR" --format json | jq -r '.affected[]')
+echo "$affected" | grep -q '^services/src/bin/api\.rs$' && exit 1 || exit 0
+```
+
+Exit code is `0` on success (including an empty `affected` list), non-zero on error.
 
 ### Diagnostic mode (`debug` subcommand)
 
