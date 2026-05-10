@@ -2,6 +2,7 @@ mod analysis;
 mod cli;
 mod git;
 mod lsp;
+mod output;
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
@@ -13,6 +14,7 @@ use url::Url;
 
 use analysis::bfs::LspBackend;
 use cli::{Cli, Command, DebugCmd};
+use output::{Reporter, Status, Summary};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -24,6 +26,9 @@ fn main() -> Result<()> {
 }
 
 fn run_default(cli: Cli) -> Result<()> {
+    let format = cli.format;
+    let reporter = Reporter::for_format(format);
+
     let workspace = cli
         .workspace
         .canonicalize()
@@ -31,42 +36,58 @@ fn run_default(cli: Cli) -> Result<()> {
 
     let (base, head) = if let Some(pr) = cli.pr {
         let local_ref = format!("dokono-pr-{pr}");
+        reporter.phase(format!("fetching PR #{pr} ..."));
         git::fetch_pr(&workspace, pr, &local_ref)?;
+        reporter.phase("computing merge-base ...");
         let mb = git::merge_base(&workspace, &cli.base, &local_ref)?;
-        eprintln!(
+        reporter.note(format!(
             "pr #{pr}: head={local_ref} base={mb} (merge-base of {})",
             cli.base
-        );
+        ));
         (mb, local_ref)
     } else {
         let head = cli.head.clone().context("--head or --pr is required")?;
         (cli.base.clone(), head)
     };
 
+    reporter.phase("diffing changes ...");
     let changes = analysis::diff::run(&workspace, &base, &head)?;
     if changes.is_empty() {
-        println!("(no .rs file changes between {base} and {head})");
-        return Ok(());
+        reporter.finish();
+        return output::emit(
+            format,
+            &Summary {
+                schema_version: 1,
+                pr: cli.pr,
+                base,
+                head,
+                status: Status::NoRsChanges,
+                affected: Vec::new(),
+            },
+        );
     }
 
+    reporter.phase("loading entrypoints ...");
     let entrypoints: HashSet<PathBuf> = analysis::entrypoints::load(&workspace)?
         .into_iter()
         .filter_map(|p| p.canonicalize().ok())
         .collect();
     if entrypoints.is_empty() {
+        reporter.finish();
         anyhow::bail!("no binary entrypoints found in {}", workspace.display());
     }
 
+    reporter.phase("spawning rust-analyzer ...");
     let mut client = lsp::client::Client::spawn(&workspace)?;
-    eprintln!(
-        "rust-analyzer spawned: pid={}",
+    reporter.phase(format!(
+        "rust-analyzer started (pid={})",
         client.pid().unwrap_or_default()
-    );
+    ));
     lsp::lifecycle::initialize(&mut client, &workspace)?;
-    eprintln!("waiting for index end ...");
+    reporter.phase("indexing workspace ...");
     lsp::progress::wait_for_index_end(&client)?;
-    eprintln!("index ended");
 
+    reporter.phase("locating changed symbols ...");
     let mut backend = ClientBackend::new(&mut client, workspace.clone());
     let mut starts: Vec<(PathBuf, Position)> = Vec::new();
     for change in &changes {
@@ -80,25 +101,47 @@ fn run_default(cli: Cli) -> Result<()> {
         }
     }
     if starts.is_empty() {
-        println!("(no symbol-level changes found)");
         lsp::lifecycle::shutdown(&mut client)?;
-        return Ok(());
+        reporter.finish();
+        return output::emit(
+            format,
+            &Summary {
+                schema_version: 1,
+                pr: cli.pr,
+                base,
+                head,
+                status: Status::NoSymbolChanges,
+                affected: Vec::new(),
+            },
+        );
     }
 
+    reporter.phase("tracing references (BFS) ...");
     let affected = analysis::bfs::run(&mut backend, starts, &entrypoints)?;
 
-    if affected.is_empty() {
-        println!("Affected entrypoints: none");
-    } else {
-        println!("Affected entrypoints:");
-        for p in &affected {
-            let display = p.strip_prefix(&workspace).unwrap_or(p);
-            println!("  {}", display.display());
-        }
-    }
-
     lsp::lifecycle::shutdown(&mut client)?;
-    Ok(())
+    reporter.finish();
+
+    let affected_rel: Vec<String> = affected
+        .iter()
+        .map(|p| {
+            p.strip_prefix(&workspace)
+                .unwrap_or(p)
+                .display()
+                .to_string()
+        })
+        .collect();
+    output::emit(
+        format,
+        &Summary {
+            schema_version: 1,
+            pr: cli.pr,
+            base,
+            head,
+            status: Status::Ok,
+            affected: affected_rel,
+        },
+    )
 }
 
 struct ClientBackend<'a> {

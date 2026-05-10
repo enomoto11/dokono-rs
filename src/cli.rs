@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -25,8 +25,20 @@ pub struct Cli {
     #[arg(long, conflicts_with = "head")]
     pub pr: Option<u32>,
 
+    /// Output format. `text` is human-friendly (with a TTY spinner on stderr);
+    /// `json` is silent on stderr and emits a structured result on stdout for
+    /// CI / scripting consumption.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
+
     #[command(subcommand)]
     pub command: Option<Command>,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug)]
+pub enum OutputFormat {
+    Text,
+    Json,
 }
 
 #[derive(Subcommand, Debug)]
