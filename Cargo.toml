@@ -28,3 +28,4 @@ lsp-types = "0.95"
 cargo_metadata = "0.18"
 url = "2"
 indicatif = "0.17"
+gix = { version = "0.83.0", features = ["blocking-http-transport-reqwest-rust-tls"] }
