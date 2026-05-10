@@ -1,41 +1,40 @@
 use anyhow::{Context, Result};
+use gix::remote::Direction;
 use std::path::Path;
-use std::process::Command as ProcCommand;
 
 pub fn fetch_pr(workspace: &Path, pr: u32, local_ref: &str) -> Result<()> {
-    let refspec = format!("pull/{pr}/head:{local_ref}");
-    let status = ProcCommand::new("git")
-        .arg("-C")
-        .arg(workspace)
-        .args(["fetch", "origin"])
-        .arg(&refspec)
-        .status()
-        .with_context(|| format!("failed to spawn git fetch for PR #{pr}"))?;
-    if !status.success() {
-        anyhow::bail!("git fetch origin {refspec} failed (status {status})");
-    }
+    let repo = gix::open(workspace)
+        .with_context(|| format!("failed to open git repo at {}", workspace.display()))?;
+    let mut remote = repo
+        .find_remote("origin")
+        .context("failed to find remote 'origin'")?;
+    let refspec = format!("+refs/pull/{pr}/head:refs/heads/{local_ref}");
+    remote
+        .replace_refspecs([refspec.as_str()], Direction::Fetch)
+        .with_context(|| format!("failed to parse refspec {refspec}"))?;
+    remote
+        .connect(Direction::Fetch)
+        .with_context(|| format!("failed to connect to origin for PR #{pr}"))?
+        .prepare_fetch(gix::progress::Discard, Default::default())
+        .with_context(|| format!("failed to prepare fetch for PR #{pr}"))?
+        .receive(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)
+        .with_context(|| format!("git fetch origin {refspec} failed"))?;
     Ok(())
 }
 
 pub fn merge_base(workspace: &Path, a: &str, b: &str) -> Result<String> {
-    let output = ProcCommand::new("git")
-        .arg("-C")
-        .arg(workspace)
-        .args(["merge-base", a, b])
-        .output()
-        .context("failed to spawn git merge-base")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "git merge-base {a} {b} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim(),
-        );
-    }
-    let sha = String::from_utf8(output.stdout)
-        .context("git merge-base output not UTF-8")?
-        .trim()
-        .to_string();
-    if sha.is_empty() {
-        anyhow::bail!("git merge-base returned empty result for {a} and {b}");
-    }
-    Ok(sha)
+    let repo = gix::open(workspace)
+        .with_context(|| format!("failed to open git repo at {}", workspace.display()))?;
+    let one = repo
+        .rev_parse_single(a)
+        .with_context(|| format!("failed to resolve revision {a}"))?
+        .detach();
+    let two = repo
+        .rev_parse_single(b)
+        .with_context(|| format!("failed to resolve revision {b}"))?
+        .detach();
+    let base = repo
+        .merge_base(one, two)
+        .with_context(|| format!("merge-base of {a} and {b} not found"))?;
+    Ok(base.to_string())
 }
