@@ -22,6 +22,16 @@ pub fn fetch_pr(workspace: &Path, pr: u32, local_ref: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn resolve_sha(workspace: &Path, rev: &str) -> Result<String> {
+    let repo = gix::open(workspace)
+        .with_context(|| format!("failed to open git repo at {}", workspace.display()))?;
+    let id = repo
+        .rev_parse_single(rev)
+        .with_context(|| format!("failed to resolve revision {rev}"))?
+        .detach();
+    Ok(id.to_string())
+}
+
 pub fn merge_base(workspace: &Path, a: &str, b: &str) -> Result<String> {
     let repo = gix::open(workspace)
         .with_context(|| format!("failed to open git repo at {}", workspace.display()))?;

@@ -38,11 +38,12 @@ fn run_default(cli: Cli) -> Result<()> {
         git::fetch_pr(&workspace, pr, &local_ref)?;
         reporter.phase("computing merge-base ...");
         let mb = git::merge_base(&workspace, &cli.base, &local_ref)?;
+        let head_sha = git::resolve_sha(&workspace, &local_ref)?;
         reporter.note(format!(
-            "pr #{pr}: head={local_ref} base={mb} (merge-base of {})",
+            "pr #{pr}: head={head_sha} base={mb} (merge-base of {})",
             cli.base
         ));
-        (mb, local_ref)
+        (mb, head_sha)
     } else {
         let head = cli.head.clone().context("--head or --pr is required")?;
         (cli.base.clone(), head)
