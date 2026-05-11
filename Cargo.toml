@@ -29,3 +29,8 @@ cargo_metadata = "0.18"
 url = "2"
 indicatif = "0.17"
 gix = { version = "0.83.0", features = ["blocking-http-transport-reqwest-rust-tls"] }
+async-lsp = { version = "0.2", default-features = false, features = ["omni-trait"] }
+tokio = { version = "1", features = ["macros", "rt", "process", "io-util", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tower = "0.5"
+futures = "0.3"
