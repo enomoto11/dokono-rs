@@ -375,8 +375,7 @@ fn filter_workspace_locations(locs: Vec<Location>, workspace_root: &Path) -> Vec
         .collect()
 }
 
-/// `GotoDeclarationResponse` is `Scalar | Array | Link`. Returns the original
-/// `(file, pos)` if anything is missing or external.
+/// Returns the original `(file, pos)` if anything is missing or external.
 fn parse_declaration(
     response: Option<GotoDeclarationResponse>,
     file: &Path,

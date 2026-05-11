@@ -42,7 +42,6 @@ struct ClientState {
     quiescent_tx: watch::Sender<QuiescentState>,
 }
 
-/// rust-analyzer-specific notification. Not in `lsp_types`, defined here.
 pub enum ServerStatusNotification {}
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -159,9 +158,6 @@ impl Client {
         self.pid
     }
 
-    /// Block until a `quiescent: true` notification with `generation > prev_gen` arrives.
-    /// Pass `0` for initial readiness; pass `current_gen()` (snapshotted before sending)
-    /// when retrying a `-32801` response.
     pub fn wait_for_quiescent_after(&self, prev_gen: u64) -> Result<u64> {
         self.runtime
             .block_on(wait_for_quiescent_after_async(&self.quiescent_rx, prev_gen))
@@ -180,8 +176,6 @@ impl Client {
         ))
     }
 
-    /// Issue a request without awaiting it. The returned `PendingRequest` borrows
-    /// from `self`; use `wait_all` to drive several concurrently.
     pub fn request_async<R>(&self, params: R::Params) -> PendingRequest<'_, R::Result>
     where
         R: Request + 'static,
@@ -192,8 +186,6 @@ impl Client {
         PendingRequest { fut: Some(fut) }
     }
 
-    /// Drive a batch of `PendingRequest`s concurrently and return their results
-    /// in the same order.
     pub fn wait_all<T>(&self, pending: Vec<PendingRequest<'_, T>>) -> Vec<Result<T>>
     where
         T: Send + 'static,
