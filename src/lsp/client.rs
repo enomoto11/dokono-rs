@@ -1,50 +1,70 @@
-//! Client for rust-analyzer over stdio.
+//! Client for rust-analyzer over stdio, built on `async-lsp`.
 //!
-//! Multiple requests can be in-flight: `dispatch` registers an `id → SyncSender`
-//! row in `pending`; the reader thread routes each response by id. Use
-//! `request_async()` to fan-out many requests before awaiting any.
+//! Public API is sync: the tokio runtime lives inside `Client`, and every
+//! request goes through `block_on`. Concurrency for batched requests is
+//! exposed via `request_async` + `wait_all` so callers can fan many requests
+//! into rust-analyzer before awaiting any.
 //!
 //! Readiness uses rust-analyzer's `experimental/serverStatus` notification —
 //! `quiescent: true` means VFS scan, cargo metadata, proc-macro loading, and
-//! cache priming are done. Tracked as `(quiescent, generation)` under a
-//! mutex+condvar so `-32801 ContentModified` retries can wait deterministically.
+//! cache priming are done. Tracked as `(quiescent, generation)` via a
+//! `tokio::sync::watch` so `-32801 ContentModified` retries can wait
+//! deterministically.
 
-use anyhow::{Context, Result, bail};
-use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, BufWriter};
+use anyhow::{Context, Result, anyhow, bail};
+use async_lsp::concurrency::ConcurrencyLayer;
+use async_lsp::panic::CatchUnwindLayer;
+use async_lsp::router::Router;
+use async_lsp::{ErrorCode, MainLoop, ServerSocket};
+use futures::future::{BoxFuture, FutureExt};
+use lsp_types::notification::Notification;
+use lsp_types::request::Request;
+use serde::{Deserialize, Serialize};
+use std::ops::ControlFlow;
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread::{self, JoinHandle};
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::runtime::Runtime;
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
+use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+use tower::ServiceBuilder;
 
-/// LSP `ContentModified` — server snapshot changed mid-request; spec says to retry.
-const ERR_CONTENT_MODIFIED: i64 = -32801;
-
-use crate::lsp::protocol;
-
-#[derive(Default, Debug)]
+#[derive(Default, Clone, Debug)]
 struct QuiescentState {
     quiescent: bool,
-    health: String,
-    /// Bumped on every `experimental/serverStatus` notification.
     generation: u64,
 }
 
-type SharedState = Arc<(Mutex<QuiescentState>, Condvar)>;
-type PendingMap = Arc<Mutex<HashMap<i64, SyncSender<Outcome>>>>;
+struct ClientState {
+    generation: u64,
+    quiescent_tx: watch::Sender<QuiescentState>,
+}
+
+pub enum ServerStatusNotification {}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct ServerStatusParams {
+    pub quiescent: bool,
+    #[serde(default)]
+    pub health: String,
+}
+
+impl Notification for ServerStatusNotification {
+    type Params = ServerStatusParams;
+    const METHOD: &'static str = "experimental/serverStatus";
+}
 
 pub struct Client {
-    child: Option<Child>,
-    stdin: Mutex<BufWriter<ChildStdin>>,
-    next_id: AtomicI64,
-    pending: PendingMap,
-    state: SharedState,
-    reader_thread: Option<JoinHandle<()>>,
-    stderr_thread: Option<JoinHandle<()>>,
+    runtime: Runtime,
+    server: ServerSocket,
+    quiescent_rx: watch::Receiver<QuiescentState>,
+    pid: Option<u32>,
+    // Kept alive so kill_on_drop fires when the client is dropped.
+    _child: Child,
+    _mainloop: JoinHandle<()>,
+    _stderr_drain: JoinHandle<()>,
 }
 
 impl Client {
@@ -55,13 +75,23 @@ impl Client {
     /// `rust-toolchain.toml`, and if that toolchain lacks rust-analyzer the proxy
     /// dies with "Unknown binary". Workspace info travels via `rootUri` instead.
     pub fn spawn(_workspace: &Path) -> Result<Self> {
-        let mut child = Command::new("rust-analyzer")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context("failed to spawn rust-analyzer (is it on PATH?)")?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("build tokio runtime")?;
 
+        let mut child = {
+            let _guard = runtime.enter();
+            Command::new("rust-analyzer")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .context("failed to spawn rust-analyzer (is it on PATH?)")?
+        };
+
+        let pid = child.id();
         let stdin = child.stdin.take().context("rust-analyzer stdin missing")?;
         let stdout = child
             .stdout
@@ -72,44 +102,41 @@ impl Client {
             .take()
             .context("rust-analyzer stderr missing")?;
 
-        let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
-        let state: SharedState = Arc::new((Mutex::new(QuiescentState::default()), Condvar::new()));
+        let (quiescent_tx, quiescent_rx) = watch::channel(QuiescentState::default());
 
-        let pending_reader = Arc::clone(&pending);
-        let state_reader = Arc::clone(&state);
+        let (mainloop, server) = MainLoop::new_client(move |_socket| {
+            let mut router = Router::new(ClientState {
+                generation: 0,
+                quiescent_tx,
+            });
+            router.notification::<ServerStatusNotification>(|state, params| {
+                state.generation += 1;
+                let _ = state.quiescent_tx.send(QuiescentState {
+                    quiescent: params.quiescent,
+                    generation: state.generation,
+                });
+                ControlFlow::Continue(())
+            });
+            router.unhandled_notification(|_, _| ControlFlow::Continue(()));
 
-        let reader_thread = thread::spawn(move || {
-            let verbose = std::env::var_os("DOKONO_VERBOSE").is_some();
-            let mut reader = BufReader::new(stdout);
-            while let Ok(Some(msg)) = protocol::read_message(&mut reader) {
-                // Response = id present, method absent.
-                let is_response = msg.get("id").is_some() && msg.get("method").is_none();
-                if is_response {
-                    let id = match msg.get("id").and_then(Value::as_i64) {
-                        Some(id) => id,
-                        None => continue,
-                    };
-                    let outcome = parse_outcome(&msg);
-                    // `remove` first so a slow waiter's drop doesn't leak the entry.
-                    let tx = pending_reader.lock().expect("pending poisoned").remove(&id);
-                    if let Some(tx) = tx {
-                        // Receiver dropped → caller gave up; ignore send failure.
-                        let _ = tx.send(outcome);
-                    }
-                } else {
-                    handle_server_status(&state_reader, &msg);
-                    if verbose {
-                        log_notification(&msg);
-                    }
-                }
+            ServiceBuilder::new()
+                .layer(CatchUnwindLayer::default())
+                .layer(ConcurrencyLayer::default())
+                .service(router)
+        });
+
+        let mainloop_handle = runtime.spawn(async move {
+            let stdout = stdout.compat();
+            let stdin = stdin.compat_write();
+            if let Err(e) = mainloop.run_buffered(stdout, stdin).await {
+                eprintln!("[ra-mainloop] error: {e:?}");
             }
         });
 
-        // Drain stderr to prevent the pipe from blocking; mirror it under DOKONO_VERBOSE.
         let verbose = std::env::var_os("DOKONO_VERBOSE").is_some();
-        let stderr_thread = thread::spawn(move || {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines().map_while(Result::ok) {
+        let stderr_handle = runtime.spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
                 if verbose {
                     eprintln!("[ra-stderr] {line}");
                 }
@@ -117,243 +144,131 @@ impl Client {
         });
 
         Ok(Self {
-            child: Some(child),
-            stdin: Mutex::new(BufWriter::new(stdin)),
-            next_id: AtomicI64::new(1),
-            pending,
-            state,
-            reader_thread: Some(reader_thread),
-            stderr_thread: Some(stderr_thread),
+            runtime,
+            server,
+            quiescent_rx,
+            pid,
+            _child: child,
+            _mainloop: mainloop_handle,
+            _stderr_drain: stderr_handle,
         })
     }
 
     pub fn pid(&self) -> Option<u32> {
-        self.child.as_ref().map(|c| c.id())
+        self.pid
     }
 
-    pub fn current_gen(&self) -> u64 {
-        self.state
-            .0
-            .lock()
-            .expect("state mutex poisoned")
-            .generation
-    }
-
-    /// Block until a `quiescent: true` notification with `generation > prev_gen` arrives.
-    /// Pass `0` for initial readiness; pass `current_gen()` (snapshotted before sending)
-    /// when retrying a `-32801` response.
     pub fn wait_for_quiescent_after(&self, prev_gen: u64) -> Result<u64> {
-        let (lock, cvar) = &*self.state;
-        let mut guard = lock.lock().expect("state mutex poisoned");
-        loop {
-            if guard.quiescent && guard.generation > prev_gen {
-                return Ok(guard.generation);
-            }
-            guard = cvar.wait(guard).expect("state mutex poisoned");
-        }
+        self.runtime
+            .block_on(wait_for_quiescent_after_async(&self.quiescent_rx, prev_gen))
     }
 
-    pub fn request<P, R>(&self, method: &str, params: P) -> Result<R>
+    pub fn request<R>(&self, params: R::Params) -> Result<R::Result>
     where
-        P: Serialize,
-        R: DeserializeOwned,
+        R: Request + 'static,
+        R::Params: Clone + Send + 'static,
+        R::Result: Send + 'static,
     {
-        self.request_async(method, params)?.wait()
+        self.runtime.block_on(request_with_retry::<R>(
+            &self.server,
+            &self.quiescent_rx,
+            params,
+        ))
     }
 
-    pub fn request_async<P>(&self, method: &str, params: P) -> Result<PendingRequest<'_>>
+    pub fn request_async<R>(&self, params: R::Params) -> PendingRequest<'_, R::Result>
     where
-        P: Serialize,
+        R: Request + 'static,
+        R::Params: Clone + Send + 'static,
+        R::Result: Send + 'static,
     {
-        let params_value = serde_json::to_value(params)
-            .with_context(|| format!("serialize params for `{method}`"))?;
-        let gen_before = self.current_gen();
-        let rx = self.dispatch(method, &params_value)?;
-        Ok(PendingRequest {
-            rx,
-            gen_before,
-            method: method.to_string(),
-            params: params_value,
-            client: self,
+        let fut = request_with_retry::<R>(&self.server, &self.quiescent_rx, params).boxed();
+        PendingRequest { fut: Some(fut) }
+    }
+
+    pub fn wait_all<T>(&self, pending: Vec<PendingRequest<'_, T>>) -> Vec<Result<T>>
+    where
+        T: Send + 'static,
+    {
+        let futs: Vec<BoxFuture<'_, Result<T>>> = pending
+            .into_iter()
+            .map(|mut p| p.fut.take().unwrap())
+            .collect();
+        self.runtime.block_on(futures::future::join_all(futs))
+    }
+
+    pub fn notify<N>(&self, params: N::Params) -> Result<()>
+    where
+        N: Notification,
+    {
+        self.server
+            .notify::<N>(params)
+            .map_err(|e| anyhow!("LSP notify `{}` failed: {e}", N::METHOD))
+    }
+
+    pub fn shutdown_and_exit(&self) -> Result<()> {
+        self.runtime.block_on(async {
+            self.server
+                .request::<lsp_types::request::Shutdown>(())
+                .await
+                .map_err(|e| anyhow!("LSP shutdown failed: {e}"))?;
+            self.server
+                .notify::<lsp_types::notification::Exit>(())
+                .map_err(|e| anyhow!("LSP exit failed: {e}"))?;
+            Ok(())
         })
     }
-
-    fn dispatch(&self, method: &str, params: &Value) -> Result<Receiver<Outcome>> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = sync_channel::<Outcome>(1);
-        self.pending
-            .lock()
-            .expect("pending poisoned")
-            .insert(id, tx);
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params,
-        });
-        let mut stdin = self.stdin.lock().expect("stdin poisoned");
-        if let Err(e) = protocol::write_message(&mut *stdin, &msg) {
-            // Failed to send: drop the pending entry so it doesn't leak.
-            self.pending.lock().expect("pending poisoned").remove(&id);
-            return Err(e).with_context(|| format!("failed to send LSP request `{method}`"));
-        }
-        Ok(rx)
-    }
-
-    pub fn notify<P>(&self, method: &str, params: P) -> Result<()>
-    where
-        P: Serialize,
-    {
-        let msg = json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        });
-        let mut stdin = self.stdin.lock().expect("stdin poisoned");
-        protocol::write_message(&mut *stdin, &msg)
-            .with_context(|| format!("failed to send LSP notification `{method}`"))
-    }
 }
 
-impl Drop for Client {
-    fn drop(&mut self) {
-        // Failsafe; callers should normally `shutdown` + `exit` before dropping.
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if let Some(t) = self.reader_thread.take() {
-            let _ = t.join();
-        }
-        if let Some(t) = self.stderr_thread.take() {
-            let _ = t.join();
-        }
-    }
+pub struct PendingRequest<'a, T> {
+    fut: Option<BoxFuture<'a, Result<T>>>,
 }
 
-/// Outstanding request. `wait()` blocks for the matching response and handles
-/// `-32801 ContentModified` by re-dispatching once the server is quiescent again.
-pub struct PendingRequest<'a> {
-    rx: Receiver<Outcome>,
-    gen_before: u64,
-    method: String,
-    params: Value,
-    client: &'a Client,
-}
-
-impl PendingRequest<'_> {
-    pub fn wait<R>(mut self) -> Result<R>
-    where
-        R: DeserializeOwned,
-    {
-        loop {
-            let outcome = self
-                .rx
-                .recv()
-                .context("rust-analyzer closed stdout before response")?;
-            match outcome {
-                Outcome::Ok(value) => {
-                    return serde_json::from_value(value).with_context(|| {
-                        format!("failed to deserialize result of `{}`", self.method)
-                    });
-                }
-                Outcome::Err { code, .. } if code == ERR_CONTENT_MODIFIED => {
-                    self.client.wait_for_quiescent_after(self.gen_before)?;
-                    self.rx = self.client.dispatch(&self.method, &self.params)?;
-                    self.gen_before = self.client.current_gen();
-                    continue;
-                }
-                Outcome::Err { code, message } => {
-                    bail!(
-                        "LSP error for `{}`: code={code} message={message}",
-                        self.method
-                    );
-                }
+async fn wait_for_quiescent_after_async(
+    rx: &watch::Receiver<QuiescentState>,
+    prev_gen: u64,
+) -> Result<u64> {
+    let mut rx = rx.clone();
+    loop {
+        {
+            let state = rx.borrow_and_update();
+            if state.quiescent && state.generation > prev_gen {
+                return Ok(state.generation);
             }
         }
+        rx.changed()
+            .await
+            .map_err(|_| anyhow!("LSP mainloop closed before quiescent"))?;
     }
 }
 
-enum Outcome {
-    Ok(Value),
-    Err { code: i64, message: String },
-}
-
-fn parse_outcome(msg: &Value) -> Outcome {
-    if let Some(err) = msg.get("error") {
-        let code = err.get("code").and_then(Value::as_i64).unwrap_or(0);
-        let message = err
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("(no message)")
-            .to_string();
-        return Outcome::Err { code, message };
-    }
-    Outcome::Ok(msg.get("result").cloned().unwrap_or(Value::Null))
-}
-
-fn handle_server_status(state: &SharedState, msg: &Value) {
-    if msg.get("method").and_then(Value::as_str) != Some("experimental/serverStatus") {
-        return;
-    }
-    let params = match msg.get("params") {
-        Some(p) => p,
-        None => return,
-    };
-    let quiescent = params
-        .get("quiescent")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let health = params
-        .get("health")
-        .and_then(Value::as_str)
-        .unwrap_or("ok")
-        .to_string();
-
-    let (lock, cvar) = &**state;
-    let mut guard = lock.lock().expect("state mutex poisoned");
-    guard.quiescent = quiescent;
-    guard.health = health;
-    guard.generation += 1;
-    drop(guard);
-    cvar.notify_all();
-}
-
-fn log_notification(msg: &Value) {
-    let method = match msg.get("method").and_then(Value::as_str) {
-        Some(m) => m,
-        None => return,
-    };
-    match method {
-        "$/progress" => {
-            // Skip `report` events — there are thousands of them per index pass.
-            let kind = msg
-                .get("params")
-                .and_then(|p| p.get("value"))
-                .and_then(|v| v.get("kind"))
-                .and_then(Value::as_str)
-                .unwrap_or("?");
-            if kind != "begin" && kind != "end" {
-                return;
+async fn request_with_retry<R>(
+    server: &ServerSocket,
+    quiescent_rx: &watch::Receiver<QuiescentState>,
+    params: R::Params,
+) -> Result<R::Result>
+where
+    R: Request,
+    R::Params: Clone + Send + 'static,
+    R::Result: Send + 'static,
+{
+    loop {
+        let gen_before = quiescent_rx.borrow().generation;
+        match server.request::<R>(params.clone()).await {
+            Ok(value) => return Ok(value),
+            Err(async_lsp::Error::Response(resp)) if resp.code == ErrorCode::CONTENT_MODIFIED => {
+                wait_for_quiescent_after_async(quiescent_rx, gen_before).await?;
+                continue;
             }
-            let token = msg
-                .get("params")
-                .and_then(|p| p.get("token"))
-                .and_then(Value::as_str)
-                .unwrap_or("?");
-            eprintln!("$/progress token={token:?} kind={kind}");
+            Err(async_lsp::Error::Response(resp)) => {
+                bail!(
+                    "LSP error for `{}`: code={} message={}",
+                    R::METHOD,
+                    resp.code.0,
+                    resp.message
+                );
+            }
+            Err(e) => bail!("LSP request `{}` failed: {e}", R::METHOD),
         }
-        "experimental/serverStatus" => {
-            let q = msg
-                .get("params")
-                .and_then(|p| p.get("quiescent"))
-                .and_then(Value::as_bool);
-            let h = msg
-                .get("params")
-                .and_then(|p| p.get("health"))
-                .and_then(Value::as_str);
-            eprintln!("experimental/serverStatus quiescent={q:?} health={h:?}");
-        }
-        _ => {}
     }
 }

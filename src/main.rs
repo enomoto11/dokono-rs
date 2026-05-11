@@ -6,8 +6,16 @@ mod output;
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use lsp_types::{DocumentSymbol, DocumentSymbolResponse, Location, Position};
-use serde_json::json;
+use lsp_types::notification::DidOpenTextDocument;
+use lsp_types::request::{
+    DocumentSymbolRequest, GotoDeclaration, GotoDeclarationParams, GotoDeclarationResponse,
+    References,
+};
+use lsp_types::{
+    DidOpenTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+    Location, PartialResultParams, Position, ReferenceContext, ReferenceParams,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, WorkDoneProgressParams,
+};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use url::Url;
@@ -88,7 +96,7 @@ fn run_default(cli: Cli) -> Result<()> {
     lsp::progress::wait_for_index_end(&client)?;
 
     reporter.phase("locating changed symbols ...");
-    let mut backend = ClientBackend::new(&mut client, workspace.clone());
+    let mut backend = ClientBackend::new(&client, workspace.clone());
     let mut starts: Vec<(PathBuf, Position)> = Vec::new();
     for change in &changes {
         let Ok(abs) = workspace.join(&change.path).canonicalize() else {
@@ -145,13 +153,13 @@ fn run_default(cli: Cli) -> Result<()> {
 }
 
 struct ClientBackend<'a> {
-    client: &'a mut lsp::client::Client,
+    client: &'a lsp::client::Client,
     workspace_root: PathBuf,
     opened: HashSet<PathBuf>,
 }
 
 impl<'a> ClientBackend<'a> {
-    fn new(client: &'a mut lsp::client::Client, workspace_root: PathBuf) -> Self {
+    fn new(client: &'a lsp::client::Client, workspace_root: PathBuf) -> Self {
         Self {
             client,
             workspace_root,
@@ -186,6 +194,49 @@ fn log_external(source: &str, file: &Path, pos: Position) {
     );
 }
 
+fn file_uri(file: &Path) -> Result<Url> {
+    Url::from_file_path(file).map_err(|_| anyhow!("not absolute path: {}", file.display()))
+}
+
+fn references_params(file: &Path, pos: Position) -> Result<ReferenceParams> {
+    Ok(ReferenceParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: file_uri(file)?,
+            },
+            position: pos,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: ReferenceContext {
+            include_declaration: false,
+        },
+    })
+}
+
+fn declaration_params(file: &Path, pos: Position) -> Result<GotoDeclarationParams> {
+    Ok(GotoDeclarationParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: file_uri(file)?,
+            },
+            position: pos,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    })
+}
+
+fn document_symbol_params(file: &Path) -> Result<DocumentSymbolParams> {
+    Ok(DocumentSymbolParams {
+        text_document: TextDocumentIdentifier {
+            uri: file_uri(file)?,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    })
+}
+
 impl analysis::bfs::LspBackend for ClientBackend<'_> {
     fn open(&mut self, file: &Path) -> Result<()> {
         if !self.opened.insert(file.to_path_buf()) {
@@ -193,19 +244,15 @@ impl analysis::bfs::LspBackend for ClientBackend<'_> {
         }
         let text =
             std::fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
-        let uri = Url::from_file_path(file)
-            .map_err(|_| anyhow!("not absolute path: {}", file.display()))?;
-        self.client.notify(
-            "textDocument/didOpen",
-            json!({
-                "textDocument": {
-                    "uri": uri,
-                    "languageId": "rust",
-                    "version": 1,
-                    "text": text,
-                }
-            }),
-        )?;
+        self.client
+            .notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: file_uri(file)?,
+                    language_id: "rust".into(),
+                    version: 1,
+                    text,
+                },
+            })?;
         Ok(())
     }
 
@@ -227,25 +274,16 @@ impl analysis::bfs::LspBackend for ClientBackend<'_> {
     fn references_batch(&mut self, items: &[(PathBuf, Position)]) -> Result<Vec<Vec<Location>>> {
         let mut pendings = Vec::with_capacity(items.len());
         for (file, pos) in items {
-            let uri = Url::from_file_path(file)
-                .map_err(|_| anyhow!("not absolute path: {}", file.display()))?;
-            pendings.push(self.client.request_async(
-                "textDocument/references",
-                json!({
-                    "textDocument": { "uri": uri },
-                    "position": { "line": pos.line, "character": pos.character },
-                    "context": { "includeDeclaration": false }
-                }),
-            )?);
+            let params = references_params(file, *pos)?;
+            pendings.push(self.client.request_async::<References>(params));
         }
-        let workspace_root = self.workspace_root.clone();
+        let results = self.client.wait_all(pendings);
         let mut out = Vec::with_capacity(items.len());
-        for ((file, pos), pending) in items.iter().zip(pendings) {
-            let res: Result<Option<Vec<Location>>> = pending.wait();
+        for ((file, pos), res) in items.iter().zip(results) {
             match res {
                 Ok(opt) => out.push(filter_workspace_locations(
                     opt.unwrap_or_default(),
-                    &workspace_root,
+                    &self.workspace_root,
                 )),
                 Err(e) if is_lsp_internal_error(&e) => {
                     warn_skip(
@@ -267,21 +305,19 @@ impl analysis::bfs::LspBackend for ClientBackend<'_> {
     ) -> Result<Vec<(PathBuf, Position)>> {
         let mut pendings = Vec::with_capacity(items.len());
         for (file, pos) in items {
-            let uri = Url::from_file_path(file)
-                .map_err(|_| anyhow!("not absolute path: {}", file.display()))?;
-            pendings.push(self.client.request_async(
-                "textDocument/declaration",
-                json!({
-                    "textDocument": { "uri": uri },
-                    "position": { "line": pos.line, "character": pos.character }
-                }),
-            )?);
+            let params = declaration_params(file, *pos)?;
+            pendings.push(self.client.request_async::<GotoDeclaration>(params));
         }
+        let results = self.client.wait_all(pendings);
         let mut out = Vec::with_capacity(items.len());
-        for ((file, pos), pending) in items.iter().zip(pendings) {
-            let res: Result<serde_json::Value> = pending.wait();
+        for ((file, pos), res) in items.iter().zip(results) {
             match res {
-                Ok(value) => out.push(parse_declaration(value, file, *pos, &self.workspace_root)),
+                Ok(response) => out.push(parse_declaration(
+                    response,
+                    file,
+                    *pos,
+                    &self.workspace_root,
+                )),
                 Err(e) if is_lsp_internal_error(&e) => {
                     warn_skip(
                         "declaration",
@@ -299,16 +335,12 @@ impl analysis::bfs::LspBackend for ClientBackend<'_> {
     fn document_symbols_batch(&mut self, files: &[PathBuf]) -> Result<Vec<Vec<DocumentSymbol>>> {
         let mut pendings = Vec::with_capacity(files.len());
         for file in files {
-            let uri = Url::from_file_path(file)
-                .map_err(|_| anyhow!("not absolute path: {}", file.display()))?;
-            pendings.push(self.client.request_async(
-                "textDocument/documentSymbol",
-                json!({ "textDocument": { "uri": uri } }),
-            )?);
+            let params = document_symbol_params(file)?;
+            pendings.push(self.client.request_async::<DocumentSymbolRequest>(params));
         }
+        let results = self.client.wait_all(pendings);
         let mut out = Vec::with_capacity(files.len());
-        for (file, pending) in files.iter().zip(pendings) {
-            let res: Result<Option<DocumentSymbolResponse>> = pending.wait();
+        for (file, res) in files.iter().zip(results) {
             match res {
                 Ok(response) => out.push(parse_document_symbols(response, file)?),
                 Err(e) if is_lsp_internal_error(&e) => {
@@ -343,44 +375,42 @@ fn filter_workspace_locations(locs: Vec<Location>, workspace_root: &Path) -> Vec
         .collect()
 }
 
-/// LSP `declaration` response is `Location | Location[] | LocationLink[] | null`;
-/// returns the original `(file, pos)` if anything is missing or external.
+/// Returns the original `(file, pos)` if anything is missing or external.
 fn parse_declaration(
-    response: serde_json::Value,
+    response: Option<GotoDeclarationResponse>,
     file: &Path,
     pos: Position,
     workspace_root: &Path,
 ) -> (PathBuf, Position) {
-    let first_loc = response.as_array().and_then(|arr| arr.first()).cloned();
-    let loc_value = first_loc.unwrap_or(response);
-    if loc_value.is_null() {
-        return (file.to_path_buf(), pos);
-    }
-    let target_uri = loc_value
-        .get("uri")
-        .or_else(|| loc_value.get("targetUri"))
-        .and_then(|v| v.as_str());
-    let range = loc_value
-        .get("range")
-        .or_else(|| loc_value.get("targetSelectionRange"));
-    let (Some(uri_str), Some(range)) = (target_uri, range) else {
-        return (file.to_path_buf(), pos);
-    };
-    let target_path = Url::parse(uri_str)
-        .ok()
-        .and_then(|u| u.to_file_path().ok())
-        .unwrap_or_else(|| file.to_path_buf());
-    let target_pos = Position {
-        line: range
-            .get("start")
-            .and_then(|s| s.get("line"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(pos.line as u64) as u32,
-        character: range
-            .get("start")
-            .and_then(|s| s.get("character"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(pos.character as u64) as u32,
+    let (target_path, target_pos) = match response {
+        Some(GotoDeclarationResponse::Scalar(loc)) => {
+            let p = loc
+                .uri
+                .to_file_path()
+                .unwrap_or_else(|_| file.to_path_buf());
+            (p, loc.range.start)
+        }
+        Some(GotoDeclarationResponse::Array(locs)) => {
+            let Some(loc) = locs.into_iter().next() else {
+                return (file.to_path_buf(), pos);
+            };
+            let p = loc
+                .uri
+                .to_file_path()
+                .unwrap_or_else(|_| file.to_path_buf());
+            (p, loc.range.start)
+        }
+        Some(GotoDeclarationResponse::Link(links)) => {
+            let Some(link) = links.into_iter().next() else {
+                return (file.to_path_buf(), pos);
+            };
+            let p = link
+                .target_uri
+                .to_file_path()
+                .unwrap_or_else(|_| file.to_path_buf());
+            (p, link.target_selection_range.start)
+        }
+        None => return (file.to_path_buf(), pos),
     };
     if !target_path.starts_with(workspace_root) {
         log_external("declaration", &target_path, target_pos);
@@ -485,16 +515,10 @@ fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
             Ok(())
         }
         DebugCmd::Symbols { file, line } => {
-            use lsp_types::DocumentSymbolResponse;
-            use serde_json::json;
-            use url::Url;
-
             let file_abs = workspace
                 .join(&file)
                 .canonicalize()
                 .with_context(|| format!("file not found: {}", file.display()))?;
-            let uri = Url::from_file_path(&file_abs)
-                .map_err(|_| anyhow::anyhow!("not absolute: {}", file_abs.display()))?;
 
             let mut client = lsp::client::Client::spawn(workspace)?;
             eprintln!(
@@ -506,33 +530,20 @@ fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
             lsp::progress::wait_for_index_end(&client)?;
             eprintln!("index ended");
 
-            // didOpen is required before any documentSymbol/references query.
             let text = std::fs::read_to_string(&file_abs)
                 .with_context(|| format!("read {}", file_abs.display()))?;
-            client.notify(
-                "textDocument/didOpen",
-                json!({
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": "rust",
-                        "version": 1,
-                        "text": text
-                    }
-                }),
-            )?;
+            client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: file_uri(&file_abs)?,
+                    language_id: "rust".into(),
+                    version: 1,
+                    text,
+                },
+            })?;
 
-            let response: Option<DocumentSymbolResponse> = client.request(
-                "textDocument/documentSymbol",
-                json!({ "textDocument": { "uri": uri } }),
-            )?;
-            let symbols = match response {
-                Some(DocumentSymbolResponse::Nested(s)) => s,
-                Some(DocumentSymbolResponse::Flat(_)) => {
-                    lsp::lifecycle::shutdown(&mut client)?;
-                    anyhow::bail!("server returned flat document symbols (unsupported)");
-                }
-                None => Vec::new(),
-            };
+            let response: Option<DocumentSymbolResponse> =
+                client.request::<DocumentSymbolRequest>(document_symbol_params(&file_abs)?)?;
+            let symbols = parse_document_symbols(response, &file_abs)?;
 
             match line {
                 Some(line1) => {
@@ -562,15 +573,10 @@ fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
             line,
             character,
         } => {
-            use serde_json::json;
-            use url::Url;
-
             let file_abs = workspace
                 .join(&file)
                 .canonicalize()
                 .with_context(|| format!("file not found: {}", file.display()))?;
-            let uri = Url::from_file_path(&file_abs)
-                .map_err(|_| anyhow::anyhow!("not absolute: {}", file_abs.display()))?;
 
             let mut client = lsp::client::Client::spawn(workspace)?;
             eprintln!(
@@ -584,26 +590,18 @@ fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
 
             let text = std::fs::read_to_string(&file_abs)
                 .with_context(|| format!("read {}", file_abs.display()))?;
-            client.notify(
-                "textDocument/didOpen",
-                json!({
-                    "textDocument": {
-                        "uri": uri,
-                        "languageId": "rust",
-                        "version": 1,
-                        "text": text,
-                    }
-                }),
-            )?;
+            client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: file_uri(&file_abs)?,
+                    language_id: "rust".into(),
+                    version: 1,
+                    text,
+                },
+            })?;
 
-            let response: Option<Vec<lsp_types::Location>> = client.request(
-                "textDocument/references",
-                json!({
-                    "textDocument": { "uri": uri },
-                    "position": { "line": line, "character": character },
-                    "context": { "includeDeclaration": false }
-                }),
-            )?;
+            let pos = Position { line, character };
+            let response: Option<Vec<Location>> =
+                client.request::<References>(references_params(&file_abs, pos)?)?;
 
             let refs = response.unwrap_or_default();
             if refs.is_empty() {
