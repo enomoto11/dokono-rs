@@ -13,9 +13,9 @@ fi
 
 cd "$CWD"
 
-# Auto-format the edited file
-if command -v rustfmt >/dev/null 2>&1; then
-  rustfmt "$FILE" 2>/dev/null || true
+# Auto-format the entire project
+if command -v cargo >/dev/null 2>&1; then
+  cargo fmt --all 2>/dev/null || true
 fi
 
 # Quick clippy feedback (stderr goes back to Claude as context)
