@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/rust-auto-fmt.sh",
+            "command": "bash .claude/hooks/rust-auto-fmt.sh",
             "timeout": 30000
           }
         ]
@@ -55,14 +55,13 @@
         ]
       }
     ],
-
     "Stop": [
       {
         "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "bash $CLAUDE_PROJECT_DIR/.claude/hooks/rust-stop-gate.sh",
+            "command": "bash .claude/hooks/rust-stop-gate.sh",
             "timeout": 120000
           }
         ]
