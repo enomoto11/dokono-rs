@@ -80,7 +80,7 @@ Or build from source:
 git clone https://github.com/enomoto11/dokono-rs
 cd dokono-rs
 cargo build --release
-# binary is produced at ./target/release/dokono-rs
+# binary is produced at ./target/release/dokono
 ```
 
 `rust-analyzer` must be available on `$PATH`:
@@ -97,10 +97,10 @@ Pass a GitHub PR number and `dokono-rs` will fetch the head from `origin`, compu
 
 ```bash
 # Impact of PR #1062 against the master branch
-dokono-rs --workspace /path/to/your-workspace --pr 1062
+dokono --workspace /path/to/your-workspace --pr 1062
 
 # Compare against a release branch instead
-dokono-rs --workspace /path/to/your-workspace --pr 1062 --base release
+dokono --workspace /path/to/your-workspace --pr 1062 --base release
 ```
 
 `--base` defaults to `master`.
@@ -123,7 +123,7 @@ If any of those assumptions do not hold (a non-GitHub forge, a non-`origin` remo
 
 ```bash
 git fetch upstream pull/123/head:my-pr
-dokono-rs --workspace . --base $(git merge-base master my-pr) --head my-pr
+dokono --workspace . --base $(git merge-base master my-pr) --head my-pr
 ```
 
 ### Compare two arbitrary git refs
@@ -132,13 +132,13 @@ Without `--pr`, you can compare any two git refs directly:
 
 ```bash
 # Base branch vs current HEAD
-dokono-rs --workspace /path/to/your-workspace --base master --head HEAD
+dokono --workspace /path/to/your-workspace --base master --head HEAD
 
 # Two specific commits
-dokono-rs --workspace /path/to/your-workspace --base abc123 --head def456
+dokono --workspace /path/to/your-workspace --base abc123 --head def456
 
 # Your feature branch vs master
-dokono-rs --workspace /path/to/your-workspace --head my-feature-branch
+dokono --workspace /path/to/your-workspace --head my-feature-branch
 # (--base defaults to master)
 ```
 
@@ -174,7 +174,7 @@ Either way, **stdout never contains progress noise**, so parsing stdout is safe.
 A single JSON object on **stdout**, completely silent on **stderr** (apart from hard errors via `anyhow`). Suitable for piping into `jq`:
 
 ```bash
-dokono-rs --workspace . --pr 1062 --format json
+dokono --workspace . --pr 1062 --format json
 ```
 
 ```json
@@ -203,7 +203,7 @@ Example CI snippet:
 
 ```bash
 # Fail the job iff a specific bin is impacted
-affected=$(dokono-rs --workspace . --pr "$PR" --format json | jq -r '.affected[]')
+affected=$(dokono --workspace . --pr "$PR" --format json | jq -r '.affected[]')
 echo "$affected" | grep -q '^services/src/bin/api\.rs$' && exit 1 || exit 0
 ```
 
@@ -215,31 +215,31 @@ For inspecting individual pipeline stages, use the `debug` subcommand:
 
 ```bash
 # Just the parsed git diff
-dokono-rs debug print-diff --workspace /path/to/your-workspace --base origin/master~5 --head origin/master
+dokono debug print-diff --workspace /path/to/your-workspace --base origin/master~5 --head origin/master
 
 # Bin entrypoints discovered via cargo metadata
-dokono-rs debug print-entrypoints --workspace /path/to/your-workspace
+dokono debug print-entrypoints --workspace /path/to/your-workspace
 
 # Run only the rust-analyzer spawn + indexing + shutdown cycle (useful for timing)
-dokono-rs debug index --workspace /path/to/your-workspace
+dokono debug index --workspace /path/to/your-workspace
 
 # documentSymbol tree for a specific file
-dokono-rs debug symbols --workspace /path/to/your-workspace \
+dokono debug symbols --workspace /path/to/your-workspace \
     --file domain/src/model/foo.rs
 
 # Symbol picked at a specific line (--line is 1-based)
-dokono-rs debug symbols --workspace /path/to/your-workspace \
+dokono debug symbols --workspace /path/to/your-workspace \
     --file domain/src/model/foo.rs --line 17
 
 # References at a specific position (--line / --char are 0-based, matching documentSymbol output)
-dokono-rs debug references --workspace /path/to/your-workspace \
+dokono debug references --workspace /path/to/your-workspace \
     --file domain/src/model/foo.rs --line 12 --char 11
 ```
 
 Setting `DOKONO_VERBOSE=1` in the environment exposes BFS traversal logs and rust-analyzer's stderr in both the main pipeline and the debug subcommands:
 
 ```bash
-DOKONO_VERBOSE=1 dokono-rs --workspace /path/to/your-workspace --pr 1062 2>&1 | grep '^\[bfs\]'
+DOKONO_VERBOSE=1 dokono --workspace /path/to/your-workspace --pr 1062 2>&1 | grep '^\[bfs\]'
 ```
 
 > rust-analyzer indexes the entire workspace on startup. Depending on project size, this can take tens of seconds to a few minutes (10–20 seconds with a warm cache on a sizeable workspace). This is an intentional trade-off: `dokono-rs` favors **correct detection** over raw speed.
@@ -294,7 +294,7 @@ rustup component add rust-analyzer --toolchain <the project's toolchain>
 Or override the toolchain for one invocation:
 
 ```bash
-RUSTUP_TOOLCHAIN=stable dokono-rs --pr 1062 ...
+RUSTUP_TOOLCHAIN=stable dokono --pr 1062 ...
 ```
 
 ### Slow runs / timeouts

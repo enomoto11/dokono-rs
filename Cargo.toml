@@ -16,7 +16,7 @@ exclude = [
 ]
 
 [[bin]]
-name = "dokono-rs"
+name = "dokono"
 path = "src/main.rs"
 
 [dependencies]
