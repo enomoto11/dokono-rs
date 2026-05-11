@@ -21,7 +21,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const BIN: &str = env!("CARGO_BIN_EXE_dokono-rs");
+const BIN: &str = env!("CARGO_BIN_EXE_dokono");
 
 #[test]
 #[ignore = "integration: spawns rust-analyzer (slow); set RUN_INTEGRATION_TESTS=1"]
