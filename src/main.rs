@@ -244,14 +244,15 @@ impl analysis::bfs::LspBackend for ClientBackend<'_> {
         }
         let text =
             std::fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
-        self.client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem {
-                uri: file_uri(file)?,
-                language_id: "rust".into(),
-                version: 1,
-                text,
-            },
-        })?;
+        self.client
+            .notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: file_uri(file)?,
+                    language_id: "rust".into(),
+                    version: 1,
+                    text,
+                },
+            })?;
         Ok(())
     }
 
@@ -311,9 +312,12 @@ impl analysis::bfs::LspBackend for ClientBackend<'_> {
         let mut out = Vec::with_capacity(items.len());
         for ((file, pos), res) in items.iter().zip(results) {
             match res {
-                Ok(response) => {
-                    out.push(parse_declaration(response, file, *pos, &self.workspace_root))
-                }
+                Ok(response) => out.push(parse_declaration(
+                    response,
+                    file,
+                    *pos,
+                    &self.workspace_root,
+                )),
                 Err(e) if is_lsp_internal_error(&e) => {
                     warn_skip(
                         "declaration",
@@ -381,14 +385,20 @@ fn parse_declaration(
 ) -> (PathBuf, Position) {
     let (target_path, target_pos) = match response {
         Some(GotoDeclarationResponse::Scalar(loc)) => {
-            let p = loc.uri.to_file_path().unwrap_or_else(|_| file.to_path_buf());
+            let p = loc
+                .uri
+                .to_file_path()
+                .unwrap_or_else(|_| file.to_path_buf());
             (p, loc.range.start)
         }
         Some(GotoDeclarationResponse::Array(locs)) => {
             let Some(loc) = locs.into_iter().next() else {
                 return (file.to_path_buf(), pos);
             };
-            let p = loc.uri.to_file_path().unwrap_or_else(|_| file.to_path_buf());
+            let p = loc
+                .uri
+                .to_file_path()
+                .unwrap_or_else(|_| file.to_path_buf());
             (p, loc.range.start)
         }
         Some(GotoDeclarationResponse::Link(links)) => {
@@ -532,8 +542,8 @@ fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
                 },
             })?;
 
-            let response: Option<DocumentSymbolResponse> = client
-                .request::<DocumentSymbolRequest>(document_symbol_params(&file_abs)?)?;
+            let response: Option<DocumentSymbolResponse> =
+                client.request::<DocumentSymbolRequest>(document_symbol_params(&file_abs)?)?;
             let symbols = parse_document_symbols(response, &file_abs)?;
 
             match line {
@@ -591,8 +601,8 @@ fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
             })?;
 
             let pos = Position { line, character };
-            let response: Option<Vec<Location>> = client
-                .request::<References>(references_params(&file_abs, pos)?)?;
+            let response: Option<Vec<Location>> =
+                client.request::<References>(references_params(&file_abs, pos)?)?;
 
             let refs = response.unwrap_or_default();
             if refs.is_empty() {

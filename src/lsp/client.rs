@@ -198,10 +198,11 @@ impl Client {
     where
         T: Send + 'static,
     {
-        let futs: Vec<BoxFuture<'_, Result<T>>> =
-            pending.into_iter().map(|mut p| p.fut.take().unwrap()).collect();
-        self.runtime
-            .block_on(futures::future::join_all(futs))
+        let futs: Vec<BoxFuture<'_, Result<T>>> = pending
+            .into_iter()
+            .map(|mut p| p.fut.take().unwrap())
+            .collect();
+        self.runtime.block_on(futures::future::join_all(futs))
     }
 
     pub fn notify<N>(&self, params: N::Params) -> Result<()>
@@ -263,9 +264,7 @@ where
         let gen_before = quiescent_rx.borrow().generation;
         match server.request::<R>(params.clone()).await {
             Ok(value) => return Ok(value),
-            Err(async_lsp::Error::Response(resp))
-                if resp.code == ErrorCode::CONTENT_MODIFIED =>
-            {
+            Err(async_lsp::Error::Response(resp)) if resp.code == ErrorCode::CONTENT_MODIFIED => {
                 wait_for_quiescent_after_async(quiescent_rx, gen_before).await?;
                 continue;
             }

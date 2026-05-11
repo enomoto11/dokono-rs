@@ -1,6 +1,6 @@
 //! `initialize` → `initialized` and `shutdown` → `exit` LSP lifecycle helpers.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use lsp_types::notification::Initialized;
 use lsp_types::request::Initialize;
 use lsp_types::{
