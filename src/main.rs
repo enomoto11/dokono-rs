@@ -46,7 +46,8 @@ fn init_tracing() {
     }
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     init_tracing();
 
     let cli = Cli::parse();
