@@ -3,7 +3,7 @@
 //! the child, so that BFS starts from the function body that was edited rather
 //! than from the surrounding `impl` block.
 
-use lsp_types::{DocumentSymbol, Position, Range};
+use super::types::{DocumentSymbol, Position, Range};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolHit {
@@ -36,11 +36,7 @@ fn innermost_at(symbols: &[DocumentSymbol], line0: u32) -> Vec<&DocumentSymbol> 
         if !range_contains_line(&sym.range, line0) {
             continue;
         }
-        let nested = sym
-            .children
-            .as_deref()
-            .map(|c| innermost_at(c, line0))
-            .unwrap_or_default();
+        let nested = innermost_at(&sym.children, line0);
         if nested.is_empty() {
             result.push(sym);
         } else {
@@ -57,11 +53,9 @@ fn range_contains_line(range: &Range, line0: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lsp_types::SymbolKind;
 
     /// Tests assert against `selection_range.start` of named symbols rather than literal
     /// line numbers, so re-numbering the fixture doesn't silently break them.
-    #[allow(deprecated)] // lsp_types::DocumentSymbol::deprecated field is required for construction
     fn sym(
         name: &str,
         range: (u32, u32),
@@ -70,35 +64,15 @@ mod tests {
     ) -> DocumentSymbol {
         DocumentSymbol {
             name: name.into(),
-            detail: None,
-            kind: SymbolKind::FUNCTION,
-            tags: None,
-            deprecated: None,
             range: Range {
-                start: Position {
-                    line: range.0,
-                    character: 0,
-                },
-                end: Position {
-                    line: range.1,
-                    character: 0,
-                },
+                start: Position { line: range.0, character: 0 },
+                end: Position { line: range.1, character: 0 },
             },
             selection_range: Range {
-                start: Position {
-                    line: sel_line,
-                    character: 4,
-                },
-                end: Position {
-                    line: sel_line,
-                    character: 7,
-                },
+                start: Position { line: sel_line, character: 4 },
+                end: Position { line: sel_line, character: 7 },
             },
-            children: if children.is_empty() {
-                None
-            } else {
-                Some(children)
-            },
+            children,
         }
     }
 

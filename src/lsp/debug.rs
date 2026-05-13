@@ -5,11 +5,12 @@
 
 use anyhow::{Context, Result};
 use lsp_types::request::{DocumentSymbolRequest, References};
-use lsp_types::{DocumentSymbol, DocumentSymbolResponse, Location, Position};
+use lsp_types::{DocumentSymbolResponse, Location, Position};
 use std::path::Path;
 use std::time::Instant;
 
 use crate::analysis::symbols;
+use crate::analysis::types as at;
 use crate::lsp::backend::{
     document_symbol_params, open_document, parse_document_symbols, references_params,
 };
@@ -56,11 +57,12 @@ pub fn symbols(workspace: &Path, file: &Path, line: Option<u32>) -> Result<()> {
         .with_context(|| format!("file not found: {}", file.display()))?;
 
     let mut client = bootstrap_client(workspace)?;
-    let symbols = fetch_document_symbols(&client, &file_abs)?;
+    let raw_symbols = fetch_document_symbols(&client, &file_abs)?;
 
     match line {
         Some(line1) => {
-            let hits = symbols::pick_at_lines(&symbols, &[line1]);
+            let domain_symbols = convert_symbols(&raw_symbols);
+            let hits = symbols::pick_at_lines(&domain_symbols, &[line1]);
             if hits.is_empty() {
                 println!("no symbol hits line {line1}");
             } else {
@@ -74,7 +76,7 @@ pub fn symbols(workspace: &Path, file: &Path, line: Option<u32>) -> Result<()> {
         }
         None => {
             println!("documentSymbol tree:");
-            print_symbol_tree(&symbols, 0);
+            print_symbol_tree(&raw_symbols, 0);
         }
     }
 
@@ -135,14 +137,29 @@ fn bootstrap_client(workspace: &Path) -> Result<Client> {
     Ok(client)
 }
 
-fn fetch_document_symbols(client: &Client, file_abs: &Path) -> Result<Vec<DocumentSymbol>> {
+fn fetch_document_symbols(client: &Client, file_abs: &Path) -> Result<Vec<lsp_types::DocumentSymbol>> {
     open_document(client, file_abs)?;
     let response: Option<DocumentSymbolResponse> =
         client.request::<DocumentSymbolRequest>(document_symbol_params(file_abs)?)?;
     parse_document_symbols(response, file_abs)
 }
 
-fn print_symbol_tree(symbols: &[DocumentSymbol], depth: usize) {
+fn convert_symbols(symbols: &[lsp_types::DocumentSymbol]) -> Vec<at::DocumentSymbol> {
+    symbols.iter().map(|s| at::DocumentSymbol {
+        name: s.name.clone(),
+        range: at::Range {
+            start: at::Position { line: s.range.start.line, character: s.range.start.character },
+            end: at::Position { line: s.range.end.line, character: s.range.end.character },
+        },
+        selection_range: at::Range {
+            start: at::Position { line: s.selection_range.start.line, character: s.selection_range.start.character },
+            end: at::Position { line: s.selection_range.end.line, character: s.selection_range.end.character },
+        },
+        children: s.children.as_deref().map(convert_symbols).unwrap_or_default(),
+    }).collect()
+}
+
+fn print_symbol_tree(symbols: &[lsp_types::DocumentSymbol], depth: usize) {
     let indent = "  ".repeat(depth);
     for s in symbols {
         println!(
