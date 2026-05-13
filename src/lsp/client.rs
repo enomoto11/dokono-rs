@@ -129,17 +129,14 @@ impl Client {
             let stdout = stdout.compat();
             let stdin = stdin.compat_write();
             if let Err(e) = mainloop.run_buffered(stdout, stdin).await {
-                eprintln!("[ra-mainloop] error: {e:?}");
+                tracing::error!("ra-mainloop error: {e:?}");
             }
         });
 
-        let verbose = std::env::var_os("DOKONO_VERBOSE").is_some();
         let stderr_handle = runtime.spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                if verbose {
-                    eprintln!("[ra-stderr] {line}");
-                }
+                tracing::trace!("ra-stderr: {line}");
             }
         });
 

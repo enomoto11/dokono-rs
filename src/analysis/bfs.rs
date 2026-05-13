@@ -59,8 +59,6 @@ pub fn run(
     starts: Vec<(PathBuf, Position)>,
     entrypoints: &HashSet<PathBuf>,
 ) -> Result<BTreeSet<PathBuf>> {
-    let verbose = std::env::var_os("DOKONO_VERBOSE").is_some();
-
     let mut frontier: Vec<(PathBuf, Position)> = starts;
     let mut visited: HashSet<(PathBuf, Position)> = HashSet::new();
     let mut affected: BTreeSet<PathBuf> = BTreeSet::new();
@@ -77,10 +75,8 @@ pub fn run(
             break;
         }
 
-        if verbose {
-            for (f, p) in &nodes {
-                eprintln!("[bfs] visit {} @ ({},{})", f.display(), p.line, p.character);
-            }
+        for (f, p) in &nodes {
+            tracing::debug!("bfs: visit {} @ ({},{})", f.display(), p.line, p.character);
         }
 
         for (file, _) in &nodes {
@@ -99,14 +95,12 @@ pub fn run(
                 continue;
             }
             backend.open(&canon.0)?;
-            if verbose {
-                eprintln!(
-                    "[bfs]   canonicalized → {} @ ({},{}) (trait method)",
-                    canon.0.display(),
-                    canon.1.line,
-                    canon.1.character
-                );
-            }
+            tracing::debug!(
+                "bfs: canonicalized → {} @ ({},{}) (trait method)",
+                canon.0.display(),
+                canon.1.line,
+                canon.1.character
+            );
             canonical_to_query.push(canon);
         }
 
@@ -144,11 +138,10 @@ pub fn run(
         let mut next: Vec<(PathBuf, Position)> = Vec::new();
         for refs in all_refs {
             for r in refs {
-                if entrypoints.contains(&r.path) {
-                    if verbose {
-                        eprintln!("[bfs]   ref → entrypoint {}", r.path.display());
-                    }
-                    affected.insert(r.path);
+                let ref_file = url_to_path(&r.uri)?;
+                if entrypoints.contains(&ref_file) {
+                    tracing::debug!("bfs: ref → entrypoint {}", ref_file.display());
+                    affected.insert(ref_file);
                     continue;
                 }
                 let syms = symbol_cache
@@ -157,26 +150,22 @@ pub fn run(
                 // pick_at_lines takes 1-based git line numbers; r.range.start.line is 0-based.
                 let hits = symbols::pick_at_lines(syms, &[r.range.start.line + 1]);
                 if hits.is_empty() {
-                    if verbose {
-                        eprintln!(
-                            "[bfs]   ref {}:{} has no enclosing symbol — skipped",
-                            r.path.display(),
-                            r.range.start.line
-                        );
-                    }
+                    tracing::debug!(
+                        "bfs: ref {}:{} has no enclosing symbol — skipped",
+                        ref_file.display(),
+                        r.range.start.line
+                    );
                     continue;
                 }
                 for hit in hits {
-                    if verbose {
-                        eprintln!(
-                            "[bfs]   ref → {} :: {} @ ({},{})",
-                            r.path.display(),
-                            hit.name,
-                            hit.position.line,
-                            hit.position.character
-                        );
-                    }
-                    next.push((r.path.clone(), hit.position));
+                    tracing::debug!(
+                        "bfs: ref → {} :: {} @ ({},{})",
+                        ref_file.display(),
+                        hit.name,
+                        hit.position.line,
+                        hit.position.character
+                    );
+                    next.push((ref_file.clone(), hit.position));
                 }
             }
         }
