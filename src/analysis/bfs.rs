@@ -138,10 +138,9 @@ pub fn run(
         let mut next: Vec<(PathBuf, Position)> = Vec::new();
         for refs in all_refs {
             for r in refs {
-                let ref_file = url_to_path(&r.uri)?;
-                if entrypoints.contains(&ref_file) {
-                    tracing::debug!("bfs: ref → entrypoint {}", ref_file.display());
-                    affected.insert(ref_file);
+                if entrypoints.contains(&r.path) {
+                    tracing::debug!("bfs: ref → entrypoint {}", r.path.display());
+                    affected.insert(r.path.clone());
                     continue;
                 }
                 let syms = symbol_cache
@@ -152,7 +151,7 @@ pub fn run(
                 if hits.is_empty() {
                     tracing::debug!(
                         "bfs: ref {}:{} has no enclosing symbol — skipped",
-                        ref_file.display(),
+                        r.path.display(),
                         r.range.start.line
                     );
                     continue;
@@ -160,12 +159,12 @@ pub fn run(
                 for hit in hits {
                     tracing::debug!(
                         "bfs: ref → {} :: {} @ ({},{})",
-                        ref_file.display(),
+                        r.path.display(),
                         hit.name,
                         hit.position.line,
                         hit.position.character
                     );
-                    next.push((ref_file.clone(), hit.position));
+                    next.push((r.path.clone(), hit.position));
                 }
             }
         }
