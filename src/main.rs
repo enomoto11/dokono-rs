@@ -58,6 +58,9 @@ fn main() -> Result<()> {
 }
 
 fn run_default(cli: Cli) -> Result<()> {
+    let span = tracing::info_span!("dokono.run");
+    let _enter = span.enter();
+
     let format = cli.format;
     let reporter = Reporter::for_format(format);
 
@@ -85,6 +88,7 @@ fn run_default(cli: Cli) -> Result<()> {
 
     reporter.phase("diffing changes ...");
     let changes = analysis::diff::run(&workspace, &base, &head)?;
+    tracing::info!(count = changes.len(), "diff complete");
     if changes.is_empty() {
         reporter.finish();
         return output::emit(
@@ -116,9 +120,15 @@ fn run_default(cli: Cli) -> Result<()> {
         "rust-analyzer started (pid={})",
         client.pid().unwrap_or_default()
     ));
+
+    let init_span = tracing::info_span!("lsp.initialize");
     lsp::lifecycle::initialize(&mut client, &workspace)?;
+    drop(init_span);
+
+    let index_span = tracing::info_span!("lsp.index");
     reporter.phase("indexing workspace ...");
     lsp::progress::wait_for_index_end(&client)?;
+    drop(index_span);
 
     reporter.phase("locating changed symbols ...");
     let mut backend = Backend::new(&client, workspace.clone());
@@ -150,7 +160,10 @@ fn run_default(cli: Cli) -> Result<()> {
     }
 
     reporter.phase("tracing references (BFS) ...");
+    let bfs_span = tracing::info_span!("bfs", starts = starts.len());
     let affected = analysis::bfs::run(&mut backend, starts, &entrypoints)?;
+    drop(bfs_span);
+    tracing::info!(affected = affected.len(), "bfs complete");
 
     lsp::lifecycle::shutdown(&mut client)?;
     reporter.finish();
