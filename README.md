@@ -236,10 +236,17 @@ dokono debug references --workspace /path/to/your-workspace \
     --file domain/src/model/foo.rs --line 12 --char 11
 ```
 
-Setting `DOKONO_VERBOSE=1` in the environment exposes BFS traversal logs and rust-analyzer's stderr in both the main pipeline and the debug subcommands:
+Logging is powered by the [`tracing`](https://crates.io/crates/tracing) crate and controlled via the standard `RUST_LOG` environment variable (default: `warn`). This works in both the main pipeline and the debug subcommands:
 
 ```bash
-DOKONO_VERBOSE=1 dokono --workspace /path/to/your-workspace --pr 1062 2>&1 | grep '^\[bfs\]'
+# Show BFS traversal and other debug-level details
+RUST_LOG=dokono=debug dokono --workspace /path/to/your-workspace --pr 1062
+
+# Show everything including rust-analyzer's stderr
+RUST_LOG=trace dokono --workspace /path/to/your-workspace --pr 1062
+
+# Suppress all log output (e.g. for CI)
+RUST_LOG=off dokono --workspace /path/to/your-workspace --pr 1062
 ```
 
 > rust-analyzer indexes the entire workspace on startup. Depending on project size, this can take tens of seconds to a few minutes (10–20 seconds with a warm cache on a sizeable workspace). This is an intentional trade-off: `dokono-rs` favors **correct detection** over raw speed.
@@ -281,7 +288,7 @@ Custom paths declared via `[[bin]]` in `Cargo.toml` are honored — `src/bin/` i
 Possible causes:
 1. The changed lines fall outside any symbol (comments, `use` statements, blank lines) — BFS has no starting point.
 2. The PR fetch failed — look for `git fetch origin pull/<N>/head:...` errors above.
-3. rust-analyzer indexing was incomplete — set `DOKONO_VERBOSE=1` and check that `experimental/serverStatus quiescent=Some(true)` is observed.
+3. rust-analyzer indexing was incomplete — set `RUST_LOG=dokono=debug` and check that `experimental/serverStatus quiescent=Some(true)` is observed.
 
 ### `Unknown binary 'rust-analyzer' in official toolchain '...'`
 
@@ -305,7 +312,7 @@ RUSTUP_TOOLCHAIN=stable dokono --pr 1062 ...
 
 ### Frequent `-32801 ContentModified`
 
-`dokono-rs` retries internally, so this normally does not surface to the user. If it does cause a hard failure, rust-analyzer's state may be unstable — set `DOKONO_VERBOSE=1` and check the `experimental/serverStatus` transitions.
+`dokono-rs` retries internally, so this normally does not surface to the user. If it does cause a hard failure, rust-analyzer's state may be unstable — set `RUST_LOG=dokono=debug` and check the `experimental/serverStatus` transitions.
 
 ## License
 
