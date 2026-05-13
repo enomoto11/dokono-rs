@@ -137,7 +137,10 @@ fn bootstrap_client(workspace: &Path) -> Result<Client> {
     Ok(client)
 }
 
-fn fetch_document_symbols(client: &Client, file_abs: &Path) -> Result<Vec<lsp_types::DocumentSymbol>> {
+fn fetch_document_symbols(
+    client: &Client,
+    file_abs: &Path,
+) -> Result<Vec<lsp_types::DocumentSymbol>> {
     open_document(client, file_abs)?;
     let response: Option<DocumentSymbolResponse> =
         client.request::<DocumentSymbolRequest>(document_symbol_params(file_abs)?)?;
@@ -145,18 +148,37 @@ fn fetch_document_symbols(client: &Client, file_abs: &Path) -> Result<Vec<lsp_ty
 }
 
 fn convert_symbols(symbols: &[lsp_types::DocumentSymbol]) -> Vec<at::DocumentSymbol> {
-    symbols.iter().map(|s| at::DocumentSymbol {
-        name: s.name.clone(),
-        range: at::Range {
-            start: at::Position { line: s.range.start.line, character: s.range.start.character },
-            end: at::Position { line: s.range.end.line, character: s.range.end.character },
-        },
-        selection_range: at::Range {
-            start: at::Position { line: s.selection_range.start.line, character: s.selection_range.start.character },
-            end: at::Position { line: s.selection_range.end.line, character: s.selection_range.end.character },
-        },
-        children: s.children.as_deref().map(convert_symbols).unwrap_or_default(),
-    }).collect()
+    symbols
+        .iter()
+        .map(|s| at::DocumentSymbol {
+            name: s.name.clone(),
+            range: at::Range {
+                start: at::Position {
+                    line: s.range.start.line,
+                    character: s.range.start.character,
+                },
+                end: at::Position {
+                    line: s.range.end.line,
+                    character: s.range.end.character,
+                },
+            },
+            selection_range: at::Range {
+                start: at::Position {
+                    line: s.selection_range.start.line,
+                    character: s.selection_range.start.character,
+                },
+                end: at::Position {
+                    line: s.selection_range.end.line,
+                    character: s.selection_range.end.character,
+                },
+            },
+            children: s
+                .children
+                .as_deref()
+                .map(convert_symbols)
+                .unwrap_or_default(),
+        })
+        .collect()
 }
 
 fn print_symbol_tree(symbols: &[lsp_types::DocumentSymbol], depth: usize) {

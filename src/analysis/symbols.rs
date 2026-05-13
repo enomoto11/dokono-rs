@@ -65,12 +65,24 @@ mod tests {
         DocumentSymbol {
             name: name.into(),
             range: Range {
-                start: Position { line: range.0, character: 0 },
-                end: Position { line: range.1, character: 0 },
+                start: Position {
+                    line: range.0,
+                    character: 0,
+                },
+                end: Position {
+                    line: range.1,
+                    character: 0,
+                },
             },
             selection_range: Range {
-                start: Position { line: sel_line, character: 4 },
-                end: Position { line: sel_line, character: 7 },
+                start: Position {
+                    line: sel_line,
+                    character: 4,
+                },
+                end: Position {
+                    line: sel_line,
+                    character: 7,
+                },
             },
             children,
         }

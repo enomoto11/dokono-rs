@@ -20,8 +20,8 @@
 //! documentSymbol) so rust-analyzer can overlap them on its thread pool;
 //! sequential `pop_front` would serialize on RTT.
 
-use anyhow::Result;
 use super::types::{DocumentSymbol, Location, Position};
+use anyhow::Result;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -187,8 +187,8 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::Range;
+    use super::*;
     use std::collections::HashMap;
 
     /// Stubbed `LspBackend` for unit tests. `declaration` defaults to no-jump unless
@@ -257,12 +257,24 @@ mod tests {
         DocumentSymbol {
             name: name.into(),
             range: Range {
-                start: Position { line: body.0, character: 0 },
-                end: Position { line: body.1, character: 0 },
+                start: Position {
+                    line: body.0,
+                    character: 0,
+                },
+                end: Position {
+                    line: body.1,
+                    character: 0,
+                },
             },
             selection_range: Range {
-                start: Position { line: sel.0, character: sel.1 },
-                end: Position { line: sel.0, character: sel.1 + 1 },
+                start: Position {
+                    line: sel.0,
+                    character: sel.1,
+                },
+                end: Position {
+                    line: sel.0,
+                    character: sel.1 + 1,
+                },
             },
             children: vec![],
         }

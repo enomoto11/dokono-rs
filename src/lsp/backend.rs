@@ -10,9 +10,9 @@ use lsp_types::request::{
     References,
 };
 use lsp_types::{
-    DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse,
-    PartialResultParams, ReferenceContext, ReferenceParams,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, WorkDoneProgressParams,
+    DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, PartialResultParams,
+    ReferenceContext, ReferenceParams, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, WorkDoneProgressParams,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -24,37 +24,52 @@ use crate::lsp::client::Client;
 
 impl From<lsp_types::Position> for at::Position {
     fn from(p: lsp_types::Position) -> Self {
-        Self { line: p.line, character: p.character }
+        Self {
+            line: p.line,
+            character: p.character,
+        }
     }
 }
 
 impl From<lsp_types::Range> for at::Range {
     fn from(r: lsp_types::Range) -> Self {
-        Self { start: r.start.into(), end: r.end.into() }
+        Self {
+            start: r.start.into(),
+            end: r.end.into(),
+        }
     }
 }
 
 impl From<lsp_types::Location> for at::Location {
     fn from(loc: lsp_types::Location) -> Self {
-        let path = loc.uri.to_file_path()
+        let path = loc
+            .uri
+            .to_file_path()
             .unwrap_or_else(|_| PathBuf::from(loc.uri.path()));
-        Self { path, range: loc.range.into() }
+        Self {
+            path,
+            range: loc.range.into(),
+        }
     }
 }
 
 fn convert_symbols(symbols: Vec<lsp_types::DocumentSymbol>) -> Vec<at::DocumentSymbol> {
-    symbols.into_iter().map(|s| at::DocumentSymbol {
-        name: s.name,
-        range: s.range.into(),
-        selection_range: s.selection_range.into(),
-        children: s.children
-            .map(convert_symbols)
-            .unwrap_or_default(),
-    }).collect()
+    symbols
+        .into_iter()
+        .map(|s| at::DocumentSymbol {
+            name: s.name,
+            range: s.range.into(),
+            selection_range: s.selection_range.into(),
+            children: s.children.map(convert_symbols).unwrap_or_default(),
+        })
+        .collect()
 }
 
 fn lsp_pos(pos: at::Position) -> lsp_types::Position {
-    lsp_types::Position { line: pos.line, character: pos.character }
+    lsp_types::Position {
+        line: pos.line,
+        character: pos.character,
+    }
 }
 
 pub struct Backend<'a> {
@@ -96,7 +111,10 @@ impl LspBackend for Backend<'_> {
         Ok(v.pop().expect("one in, one out"))
     }
 
-    fn references_batch(&mut self, items: &[(PathBuf, at::Position)]) -> Result<Vec<Vec<at::Location>>> {
+    fn references_batch(
+        &mut self,
+        items: &[(PathBuf, at::Position)],
+    ) -> Result<Vec<Vec<at::Location>>> {
         let mut pendings = Vec::with_capacity(items.len());
         for (file, pos) in items {
             let params = references_params(file, lsp_pos(*pos))?;
@@ -107,13 +125,10 @@ impl LspBackend for Backend<'_> {
         for ((file, pos), res) in items.iter().zip(results) {
             match res {
                 Ok(opt) => out.push(
-                    filter_workspace_locations(
-                        opt.unwrap_or_default(),
-                        &self.workspace_root,
-                    )
-                    .into_iter()
-                    .map(at::Location::from)
-                    .collect(),
+                    filter_workspace_locations(opt.unwrap_or_default(), &self.workspace_root)
+                        .into_iter()
+                        .map(at::Location::from)
+                        .collect(),
                 ),
                 Err(e) if is_lsp_internal_error(&e) => {
                     warn_skip(
@@ -162,7 +177,10 @@ impl LspBackend for Backend<'_> {
         Ok(out)
     }
 
-    fn document_symbols_batch(&mut self, files: &[PathBuf]) -> Result<Vec<Vec<at::DocumentSymbol>>> {
+    fn document_symbols_batch(
+        &mut self,
+        files: &[PathBuf],
+    ) -> Result<Vec<Vec<at::DocumentSymbol>>> {
         let mut pendings = Vec::with_capacity(files.len());
         for file in files {
             let params = document_symbol_params(file)?;
@@ -246,7 +264,10 @@ fn declaration_params(file: &Path, pos: lsp_types::Position) -> Result<GotoDecla
 /// (observed >7000 on large workspaces), which explode the BFS queue and
 /// trigger downstream `-32603` panics. Entrypoints live in the workspace, so
 /// external locations cannot reach a bin anyway.
-fn filter_workspace_locations(locs: Vec<lsp_types::Location>, workspace_root: &Path) -> Vec<lsp_types::Location> {
+fn filter_workspace_locations(
+    locs: Vec<lsp_types::Location>,
+    workspace_root: &Path,
+) -> Vec<lsp_types::Location> {
     locs.into_iter()
         .filter(|loc| {
             let path = match loc.uri.to_file_path() {
@@ -272,7 +293,9 @@ fn parse_declaration(
 ) -> (PathBuf, at::Position) {
     let (target_path, target_pos): (PathBuf, at::Position) = match response {
         Some(GotoDeclarationResponse::Scalar(loc)) => {
-            let p = loc.uri.to_file_path()
+            let p = loc
+                .uri
+                .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
             (p, loc.range.start.into())
         }
@@ -280,7 +303,9 @@ fn parse_declaration(
             let Some(loc) = locs.into_iter().next() else {
                 return (file.to_path_buf(), pos);
             };
-            let p = loc.uri.to_file_path()
+            let p = loc
+                .uri
+                .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
             (p, loc.range.start.into())
         }
@@ -288,7 +313,9 @@ fn parse_declaration(
             let Some(link) = links.into_iter().next() else {
                 return (file.to_path_buf(), pos);
             };
-            let p = link.target_uri.to_file_path()
+            let p = link
+                .target_uri
+                .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
             (p, link.target_selection_range.start.into())
         }
