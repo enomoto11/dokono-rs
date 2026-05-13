@@ -10,16 +10,67 @@ use lsp_types::request::{
     References,
 };
 use lsp_types::{
-    DidOpenTextDocumentParams, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-    Location, PartialResultParams, Position, ReferenceContext, ReferenceParams,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, WorkDoneProgressParams,
+    DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, PartialResultParams,
+    ReferenceContext, ReferenceParams, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, WorkDoneProgressParams,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use url::Url;
 
 use crate::analysis::bfs::LspBackend;
+use crate::analysis::types::{self as at};
 use crate::lsp::client::Client;
+
+impl From<lsp_types::Position> for at::Position {
+    fn from(p: lsp_types::Position) -> Self {
+        Self {
+            line: p.line,
+            character: p.character,
+        }
+    }
+}
+
+impl From<lsp_types::Range> for at::Range {
+    fn from(r: lsp_types::Range) -> Self {
+        Self {
+            start: r.start.into(),
+            end: r.end.into(),
+        }
+    }
+}
+
+impl From<lsp_types::Location> for at::Location {
+    fn from(loc: lsp_types::Location) -> Self {
+        let path = loc
+            .uri
+            .to_file_path()
+            .unwrap_or_else(|_| PathBuf::from(loc.uri.path()));
+        Self {
+            path,
+            range: loc.range.into(),
+        }
+    }
+}
+
+fn convert_symbols(symbols: Vec<lsp_types::DocumentSymbol>) -> Vec<at::DocumentSymbol> {
+    symbols
+        .into_iter()
+        .map(|s| at::DocumentSymbol {
+            name: s.name,
+            range: s.range.into(),
+            selection_range: s.selection_range.into(),
+            children: s.children.map(convert_symbols).unwrap_or_default(),
+        })
+        .collect()
+}
+
+fn lsp_pos(pos: at::Position) -> lsp_types::Position {
+    lsp_types::Position {
+        line: pos.line,
+        character: pos.character,
+    }
+}
 
 pub struct Backend<'a> {
     client: &'a Client,
@@ -45,35 +96,40 @@ impl LspBackend for Backend<'_> {
         open_document(self.client, file)
     }
 
-    fn references(&mut self, file: &Path, pos: Position) -> Result<Vec<Location>> {
+    fn references(&mut self, file: &Path, pos: at::Position) -> Result<Vec<at::Location>> {
         let mut v = self.references_batch(&[(file.to_path_buf(), pos)])?;
         Ok(v.pop().expect("one in, one out"))
     }
 
-    fn declaration(&mut self, file: &Path, pos: Position) -> Result<(PathBuf, Position)> {
+    fn declaration(&mut self, file: &Path, pos: at::Position) -> Result<(PathBuf, at::Position)> {
         let mut v = self.declarations_batch(&[(file.to_path_buf(), pos)])?;
         Ok(v.pop().expect("one in, one out"))
     }
 
-    fn document_symbols(&mut self, file: &Path) -> Result<Vec<DocumentSymbol>> {
+    fn document_symbols(&mut self, file: &Path) -> Result<Vec<at::DocumentSymbol>> {
         let mut v = self.document_symbols_batch(&[file.to_path_buf()])?;
         Ok(v.pop().expect("one in, one out"))
     }
 
-    fn references_batch(&mut self, items: &[(PathBuf, Position)]) -> Result<Vec<Vec<Location>>> {
+    fn references_batch(
+        &mut self,
+        items: &[(PathBuf, at::Position)],
+    ) -> Result<Vec<Vec<at::Location>>> {
         let mut pendings = Vec::with_capacity(items.len());
         for (file, pos) in items {
-            let params = references_params(file, *pos)?;
+            let params = references_params(file, lsp_pos(*pos))?;
             pendings.push(self.client.request_async::<References>(params));
         }
         let results = self.client.wait_all(pendings);
         let mut out = Vec::with_capacity(items.len());
         for ((file, pos), res) in items.iter().zip(results) {
             match res {
-                Ok(opt) => out.push(filter_workspace_locations(
-                    opt.unwrap_or_default(),
-                    &self.workspace_root,
-                )),
+                Ok(opt) => out.push(
+                    filter_workspace_locations(opt.unwrap_or_default(), &self.workspace_root)
+                        .into_iter()
+                        .map(at::Location::from)
+                        .collect(),
+                ),
                 Err(e) if is_lsp_internal_error(&e) => {
                     warn_skip(
                         "references",
@@ -90,11 +146,11 @@ impl LspBackend for Backend<'_> {
 
     fn declarations_batch(
         &mut self,
-        items: &[(PathBuf, Position)],
-    ) -> Result<Vec<(PathBuf, Position)>> {
+        items: &[(PathBuf, at::Position)],
+    ) -> Result<Vec<(PathBuf, at::Position)>> {
         let mut pendings = Vec::with_capacity(items.len());
         for (file, pos) in items {
-            let params = declaration_params(file, *pos)?;
+            let params = declaration_params(file, lsp_pos(*pos))?;
             pendings.push(self.client.request_async::<GotoDeclaration>(params));
         }
         let results = self.client.wait_all(pendings);
@@ -121,7 +177,10 @@ impl LspBackend for Backend<'_> {
         Ok(out)
     }
 
-    fn document_symbols_batch(&mut self, files: &[PathBuf]) -> Result<Vec<Vec<DocumentSymbol>>> {
+    fn document_symbols_batch(
+        &mut self,
+        files: &[PathBuf],
+    ) -> Result<Vec<Vec<at::DocumentSymbol>>> {
         let mut pendings = Vec::with_capacity(files.len());
         for file in files {
             let params = document_symbol_params(file)?;
@@ -131,7 +190,10 @@ impl LspBackend for Backend<'_> {
         let mut out = Vec::with_capacity(files.len());
         for (file, res) in files.iter().zip(results) {
             match res {
-                Ok(response) => out.push(parse_document_symbols(response, file)?),
+                Ok(response) => {
+                    let raw = parse_document_symbols(response, file)?;
+                    out.push(convert_symbols(raw));
+                }
                 Err(e) if is_lsp_internal_error(&e) => {
                     warn_skip("documentSymbol", file.display(), &e);
                     out.push(Vec::new());
@@ -169,7 +231,7 @@ pub(crate) fn document_symbol_params(file: &Path) -> Result<DocumentSymbolParams
     })
 }
 
-pub(crate) fn references_params(file: &Path, pos: Position) -> Result<ReferenceParams> {
+pub(crate) fn references_params(file: &Path, pos: lsp_types::Position) -> Result<ReferenceParams> {
     Ok(ReferenceParams {
         text_document_position: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier {
@@ -185,7 +247,7 @@ pub(crate) fn references_params(file: &Path, pos: Position) -> Result<ReferenceP
     })
 }
 
-fn declaration_params(file: &Path, pos: Position) -> Result<GotoDeclarationParams> {
+fn declaration_params(file: &Path, pos: lsp_types::Position) -> Result<GotoDeclarationParams> {
     Ok(GotoDeclarationParams {
         text_document_position_params: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier {
@@ -202,7 +264,10 @@ fn declaration_params(file: &Path, pos: Position) -> Result<GotoDeclarationParam
 /// (observed >7000 on large workspaces), which explode the BFS queue and
 /// trigger downstream `-32603` panics. Entrypoints live in the workspace, so
 /// external locations cannot reach a bin anyway.
-fn filter_workspace_locations(locs: Vec<Location>, workspace_root: &Path) -> Vec<Location> {
+fn filter_workspace_locations(
+    locs: Vec<lsp_types::Location>,
+    workspace_root: &Path,
+) -> Vec<lsp_types::Location> {
     locs.into_iter()
         .filter(|loc| {
             let path = match loc.uri.to_file_path() {
@@ -212,7 +277,7 @@ fn filter_workspace_locations(locs: Vec<Location>, workspace_root: &Path) -> Vec
             if path.starts_with(workspace_root) {
                 true
             } else {
-                log_external("references", &path, loc.range.start);
+                log_external("references", &path, loc.range.start.into());
                 false
             }
         })
@@ -223,16 +288,16 @@ fn filter_workspace_locations(locs: Vec<Location>, workspace_root: &Path) -> Vec
 fn parse_declaration(
     response: Option<GotoDeclarationResponse>,
     file: &Path,
-    pos: Position,
+    pos: at::Position,
     workspace_root: &Path,
-) -> (PathBuf, Position) {
-    let (target_path, target_pos) = match response {
+) -> (PathBuf, at::Position) {
+    let (target_path, target_pos): (PathBuf, at::Position) = match response {
         Some(GotoDeclarationResponse::Scalar(loc)) => {
             let p = loc
                 .uri
                 .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
-            (p, loc.range.start)
+            (p, loc.range.start.into())
         }
         Some(GotoDeclarationResponse::Array(locs)) => {
             let Some(loc) = locs.into_iter().next() else {
@@ -242,7 +307,7 @@ fn parse_declaration(
                 .uri
                 .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
-            (p, loc.range.start)
+            (p, loc.range.start.into())
         }
         Some(GotoDeclarationResponse::Link(links)) => {
             let Some(link) = links.into_iter().next() else {
@@ -252,7 +317,7 @@ fn parse_declaration(
                 .target_uri
                 .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
-            (p, link.target_selection_range.start)
+            (p, link.target_selection_range.start.into())
         }
         None => return (file.to_path_buf(), pos),
     };
@@ -269,7 +334,7 @@ fn parse_declaration(
 pub(crate) fn parse_document_symbols(
     response: Option<DocumentSymbolResponse>,
     file: &Path,
-) -> Result<Vec<DocumentSymbol>> {
+) -> Result<Vec<lsp_types::DocumentSymbol>> {
     match response {
         Some(DocumentSymbolResponse::Nested(s)) => Ok(s),
         Some(DocumentSymbolResponse::Flat(s)) if s.is_empty() => Ok(Vec::new()),
@@ -295,7 +360,7 @@ fn warn_skip(method: &str, where_at: impl std::fmt::Display, e: &anyhow::Error) 
 /// Diagnostic for external (std / cargo registry) paths surfaced by the LSP server.
 /// Production behavior is to silently drop them so BFS stays in the workspace; this
 /// log uses `debug` level so it can be enabled via `RUST_LOG=dokono=debug`.
-fn log_external(source: &str, file: &Path, pos: Position) {
+fn log_external(source: &str, file: &Path, pos: at::Position) {
     tracing::debug!(
         "from {source}: {}:{}:{}",
         file.display(),

@@ -20,8 +20,8 @@
 //! documentSymbol) so rust-analyzer can overlap them on its thread pool;
 //! sequential `pop_front` would serialize on RTT.
 
-use anyhow::{Result, anyhow};
-use lsp_types::{DocumentSymbol, Location, Position};
+use super::types::{DocumentSymbol, Location, Position};
+use anyhow::Result;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -114,15 +114,14 @@ pub fn run(
         let mut seen: HashSet<PathBuf> = HashSet::new();
         for refs in &all_refs {
             for r in refs {
-                let ref_file = url_to_path(&r.uri)?;
-                if entrypoints.contains(&ref_file) {
+                if entrypoints.contains(&r.path) {
                     continue;
                 }
-                if symbol_cache.contains_key(&ref_file) {
+                if symbol_cache.contains_key(&r.path) {
                     continue;
                 }
-                if seen.insert(ref_file.clone()) {
-                    to_query.push(ref_file);
+                if seen.insert(r.path.clone()) {
+                    to_query.push(r.path.clone());
                 }
             }
         }
@@ -139,21 +138,20 @@ pub fn run(
         let mut next: Vec<(PathBuf, Position)> = Vec::new();
         for refs in all_refs {
             for r in refs {
-                let ref_file = url_to_path(&r.uri)?;
-                if entrypoints.contains(&ref_file) {
-                    tracing::debug!("bfs: ref → entrypoint {}", ref_file.display());
-                    affected.insert(ref_file);
+                if entrypoints.contains(&r.path) {
+                    tracing::debug!("bfs: ref → entrypoint {}", r.path.display());
+                    affected.insert(r.path.clone());
                     continue;
                 }
                 let syms = symbol_cache
-                    .get(&ref_file)
+                    .get(&r.path)
                     .expect("symbol_cache primed in pre-pass");
                 // pick_at_lines takes 1-based git line numbers; r.range.start.line is 0-based.
                 let hits = symbols::pick_at_lines(syms, &[r.range.start.line + 1]);
                 if hits.is_empty() {
                     tracing::debug!(
                         "bfs: ref {}:{} has no enclosing symbol — skipped",
-                        ref_file.display(),
+                        r.path.display(),
                         r.range.start.line
                     );
                     continue;
@@ -161,12 +159,12 @@ pub fn run(
                 for hit in hits {
                     tracing::debug!(
                         "bfs: ref → {} :: {} @ ({},{})",
-                        ref_file.display(),
+                        r.path.display(),
                         hit.name,
                         hit.position.line,
                         hit.position.character
                     );
-                    next.push((ref_file.clone(), hit.position));
+                    next.push((r.path.clone(), hit.position));
                 }
             }
         }
@@ -175,15 +173,10 @@ pub fn run(
     Ok(affected)
 }
 
-fn url_to_path(url: &lsp_types::Url) -> Result<PathBuf> {
-    url.to_file_path()
-        .map_err(|_| anyhow!("URL is not a file path: {url}"))
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::types::Range;
     use super::*;
-    use lsp_types::{Range, SymbolKind, Url};
     use std::collections::HashMap;
 
     /// Stubbed `LspBackend` for unit tests. `declaration` defaults to no-jump unless
@@ -248,14 +241,9 @@ mod tests {
         }
     }
 
-    #[allow(deprecated)] // lsp_types::DocumentSymbol::deprecated field is required for construction
     fn fn_symbol(name: &str, body: (u32, u32), sel: (u32, u32)) -> DocumentSymbol {
         DocumentSymbol {
             name: name.into(),
-            detail: None,
-            kind: SymbolKind::FUNCTION,
-            tags: None,
-            deprecated: None,
             range: Range {
                 start: Position {
                     line: body.0,
@@ -276,7 +264,7 @@ mod tests {
                     character: sel.1 + 1,
                 },
             },
-            children: None,
+            children: vec![],
         }
     }
 
@@ -286,7 +274,7 @@ mod tests {
 
     fn loc(file: &Path, line: u32, character: u32) -> Location {
         Location {
-            uri: Url::from_file_path(file).unwrap(),
+            path: file.to_path_buf(),
             range: Range {
                 start: pos(line, character),
                 end: pos(line, character + 1),
