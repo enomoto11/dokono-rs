@@ -16,7 +16,7 @@ use cli::{Cli, Command, DebugCmd};
 use lsp::backend::Backend;
 use output::{Reporter, Status, Summary};
 
-fn init_tracing() {
+fn init_tracing() -> Option<SdkTracerProvider> {
     use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
@@ -24,11 +24,22 @@ fn init_tracing() {
     let fmt_layer = tracing_subscriber::fmt::layer();
 
     if std::env::var("DOKONO_OTEL").is_ok() {
+        // OTLP batch exporter (tonic) needs a Tokio runtime for its background
+        // worker.  We create a dedicated runtime here and leak it so the
+        // exporter's tasks keep running until process exit.
+        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime for OTLP");
+        let _guard = rt.enter();
+
         let exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
             .build()
             .expect("failed to create OTLP span exporter");
         let provider = SdkTracerProvider::builder()
+            .with_resource(
+                opentelemetry_sdk::Resource::builder()
+                    .with_service_name("dokono")
+                    .build(),
+            )
             .with_batch_exporter(exporter)
             .build();
         let tracer = provider.tracer("dokono");
@@ -38,24 +49,35 @@ fn init_tracing() {
             .with(fmt_layer)
             .with(otel_layer)
             .init();
+
+        std::mem::forget(rt);
+        Some(provider)
     } else {
         tracing_subscriber::registry()
             .with(env_filter)
             .with(fmt_layer)
             .init();
+        None
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    init_tracing();
+fn main() -> Result<()> {
+    let provider = init_tracing();
 
     let cli = Cli::parse();
 
-    match cli.command {
+    let result = match cli.command {
         Some(Command::Debug { cmd }) => run_debug(&cli.workspace, cmd),
         None => run_default(cli),
+    };
+
+    // Flush pending spans before exit so the batch exporter sends them
+    // to the OTLP backend.
+    if let Some(p) = provider {
+        let _ = p.shutdown();
     }
+
+    result
 }
 
 fn run_default(cli: Cli) -> Result<()> {
