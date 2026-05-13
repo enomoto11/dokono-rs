@@ -289,18 +289,15 @@ fn is_lsp_internal_error(e: &anyhow::Error) -> bool {
 
 fn warn_skip(method: &str, where_at: impl std::fmt::Display, e: &anyhow::Error) {
     let summary = e.to_string().lines().next().unwrap_or("").to_string();
-    eprintln!("[warn] rust-analyzer error on {method}({where_at}); skipping: {summary}");
+    tracing::warn!("rust-analyzer error on {method}({where_at}); skipping: {summary}");
 }
 
 /// Diagnostic for external (std / cargo registry) paths surfaced by the LSP server.
 /// Production behavior is to silently drop them so BFS stays in the workspace; this
-/// log is gated on `DOKONO_VERBOSE` so debug runs can still see what was filtered.
+/// log uses `debug` level so it can be enabled via `RUST_LOG=dokono=debug`.
 fn log_external(source: &str, file: &Path, pos: Position) {
-    if std::env::var_os("DOKONO_VERBOSE").is_none() {
-        return;
-    }
-    eprintln!(
-        "[external] from {source}: {}:{}:{}",
+    tracing::debug!(
+        "from {source}: {}:{}:{}",
         file.display(),
         pos.line,
         pos.character

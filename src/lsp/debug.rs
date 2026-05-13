@@ -28,24 +28,23 @@ pub fn spawn_only(workspace: &Path) -> Result<()> {
 }
 
 pub fn index(workspace: &Path) -> Result<()> {
-    // Use stderr — stdout becomes block-buffered when piped on macOS.
     let mut client = Client::spawn(workspace)?;
-    eprintln!(
+    tracing::info!(
         "rust-analyzer spawned: pid={}",
         client.pid().unwrap_or_default()
     );
 
     let init_start = Instant::now();
     lifecycle::initialize(&mut client, workspace)?;
-    eprintln!("initialize ok ({:.2?})", init_start.elapsed());
+    tracing::info!("initialize ok ({:.2?})", init_start.elapsed());
 
-    eprintln!("waiting for index end ...");
+    tracing::info!("waiting for index end ...");
     let idx_start = Instant::now();
     progress::wait_for_index_end(&client)?;
-    eprintln!("index ended ({:.2?})", idx_start.elapsed());
+    tracing::info!("index ended ({:.2?})", idx_start.elapsed());
 
     lifecycle::shutdown(&mut client)?;
-    eprintln!("shutdown ok");
+    tracing::info!("shutdown ok");
     Ok(())
 }
 
@@ -124,14 +123,14 @@ pub fn references(workspace: &Path, file: &Path, line: u32, character: u32) -> R
 
 fn bootstrap_client(workspace: &Path) -> Result<Client> {
     let mut client = Client::spawn(workspace)?;
-    eprintln!(
+    tracing::info!(
         "rust-analyzer spawned: pid={}",
         client.pid().unwrap_or_default()
     );
     lifecycle::initialize(&mut client, workspace)?;
-    eprintln!("waiting for index end ...");
+    tracing::info!("waiting for index end ...");
     progress::wait_for_index_end(&client)?;
-    eprintln!("index ended");
+    tracing::info!("index ended");
     Ok(client)
 }
 
