@@ -249,6 +249,26 @@ RUST_LOG=trace dokono --workspace /path/to/your-workspace --pr 1062
 RUST_LOG=off dokono --workspace /path/to/your-workspace --pr 1062
 ```
 
+#### Distributed tracing with Jaeger
+
+Set the `DOKONO_OTEL` environment variable to export traces to an OpenTelemetry-compatible backend (e.g. [Jaeger](https://www.jaegertracing.io/)):
+
+```bash
+# 1. Start Jaeger locally (collects OTLP over gRPC on port 4317, UI on 16686)
+docker run -d --name jaeger \
+  -p 16686:16686 \
+  -p 4317:4317 \
+  jaegertracing/jaeger:2.5
+
+# 2. Run dokono with tracing enabled
+DOKONO_OTEL=1 RUST_LOG=dokono=debug dokono --workspace /path/to/your-workspace --pr 1062
+
+# 3. Open the Jaeger UI
+open http://localhost:16686
+```
+
+When `DOKONO_OTEL` is not set, the OpenTelemetry layer is completely disabled and adds zero overhead.
+
 > rust-analyzer indexes the entire workspace on startup. Depending on project size, this can take tens of seconds to a few minutes (10–20 seconds with a warm cache on a sizeable workspace). This is an intentional trade-off: `dokono-rs` favors **correct detection** over raw speed.
 
 ## Supported project layouts
