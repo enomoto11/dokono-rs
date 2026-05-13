@@ -6,6 +6,8 @@ mod output;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_sdk::trace::SdkTracerProvider;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -14,23 +16,74 @@ use cli::{Cli, Command, DebugCmd};
 use lsp::backend::Backend;
 use output::{Reporter, Status, Summary};
 
-fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-        )
-        .init();
+fn init_tracing() -> Option<SdkTracerProvider> {
+    use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-    let cli = Cli::parse();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
 
-    match cli.command {
-        Some(Command::Debug { cmd }) => run_debug(&cli.workspace, cmd),
-        None => run_default(cli),
+    let fmt_layer = tracing_subscriber::fmt::layer();
+
+    if std::env::var("DOKONO_OTEL").is_ok() {
+        // OTLP batch exporter (tonic) needs a Tokio runtime for its background
+        // worker.  We create a dedicated runtime here and leak it so the
+        // exporter's tasks keep running until process exit.
+        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime for OTLP");
+        let _guard = rt.enter();
+
+        let exporter = opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .build()
+            .expect("failed to create OTLP span exporter");
+        let provider = SdkTracerProvider::builder()
+            .with_resource(
+                opentelemetry_sdk::Resource::builder()
+                    .with_service_name("dokono")
+                    .build(),
+            )
+            .with_batch_exporter(exporter)
+            .build();
+        let tracer = provider.tracer("dokono");
+        let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_layer)
+            .with(otel_layer)
+            .init();
+
+        std::mem::forget(rt);
+        Some(provider)
+    } else {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_layer)
+            .init();
+        None
     }
 }
 
+fn main() -> Result<()> {
+    let provider = init_tracing();
+
+    let cli = Cli::parse();
+
+    let result = match cli.command {
+        Some(Command::Debug { cmd }) => run_debug(&cli.workspace, cmd),
+        None => run_default(cli),
+    };
+
+    // Flush pending spans before exit so the batch exporter sends them
+    // to the OTLP backend.
+    if let Some(p) = provider {
+        let _ = p.shutdown();
+    }
+
+    result
+}
+
 fn run_default(cli: Cli) -> Result<()> {
+    let span = tracing::info_span!("dokono.run");
+    let _enter = span.enter();
+
     let format = cli.format;
     let reporter = Reporter::for_format(format);
 
@@ -58,6 +111,7 @@ fn run_default(cli: Cli) -> Result<()> {
 
     reporter.phase("diffing changes ...");
     let changes = analysis::diff::run(&workspace, &base, &head)?;
+    tracing::info!(count = changes.len(), "diff complete");
     if changes.is_empty() {
         reporter.finish();
         return output::emit(
@@ -89,9 +143,15 @@ fn run_default(cli: Cli) -> Result<()> {
         "rust-analyzer started (pid={})",
         client.pid().unwrap_or_default()
     ));
+
+    let init_span = tracing::info_span!("lsp.initialize");
     lsp::lifecycle::initialize(&mut client, &workspace)?;
+    drop(init_span);
+
+    let index_span = tracing::info_span!("lsp.index");
     reporter.phase("indexing workspace ...");
     lsp::progress::wait_for_index_end(&client)?;
+    drop(index_span);
 
     reporter.phase("locating changed symbols ...");
     let mut backend = Backend::new(&client, workspace.clone());
@@ -123,7 +183,10 @@ fn run_default(cli: Cli) -> Result<()> {
     }
 
     reporter.phase("tracing references (BFS) ...");
+    let bfs_span = tracing::info_span!("bfs", starts = starts.len());
     let affected = analysis::bfs::run(&mut backend, starts, &entrypoints)?;
+    drop(bfs_span);
+    tracing::info!(affected = affected.len(), "bfs complete");
 
     lsp::lifecycle::shutdown(&mut client)?;
     reporter.finish();

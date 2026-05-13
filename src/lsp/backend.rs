@@ -118,7 +118,17 @@ impl LspBackend for Backend<'_> {
         let mut pendings = Vec::with_capacity(items.len());
         for (file, pos) in items {
             let params = references_params(file, lsp_pos(*pos))?;
-            pendings.push(self.client.request_async::<References>(params));
+            let span = tracing::info_span!(
+                "lsp.references",
+                file = %file.display(),
+                line = pos.line,
+                character = pos.character,
+            );
+            pendings.push(
+                self.client
+                    .request_async::<References>(params)
+                    .in_span(span),
+            );
         }
         let results = self.client.wait_all(pendings);
         let mut out = Vec::with_capacity(items.len());

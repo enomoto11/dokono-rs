@@ -221,6 +221,16 @@ pub struct PendingRequest<'a, T> {
     fut: Option<BoxFuture<'a, Result<T>>>,
 }
 
+impl<'a, T: Send + 'static> PendingRequest<'a, T> {
+    pub fn in_span(mut self, span: tracing::Span) -> Self {
+        use tracing::Instrument as _;
+        let fut = self.fut.take().expect("PendingRequest already consumed");
+        Self {
+            fut: Some(fut.instrument(span).boxed()),
+        }
+    }
+}
+
 async fn wait_for_quiescent_after_async(
     rx: &watch::Receiver<QuiescentState>,
     prev_gen: u64,

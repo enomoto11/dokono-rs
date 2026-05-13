@@ -63,8 +63,18 @@ pub fn run(
     let mut visited: HashSet<(PathBuf, Position)> = HashSet::new();
     let mut affected: BTreeSet<PathBuf> = BTreeSet::new();
     let mut symbol_cache: HashMap<PathBuf, Vec<DocumentSymbol>> = HashMap::new();
+    let mut wave: u32 = 0;
 
     while !frontier.is_empty() {
+        let wave_span = tracing::info_span!(
+            "bfs.wave",
+            wave,
+            frontier_in = frontier.len(),
+            nodes = tracing::field::Empty,
+            refs_total = tracing::field::Empty,
+        );
+        let _wave_enter = wave_span.enter();
+
         let mut nodes: Vec<(PathBuf, Position)> = Vec::with_capacity(frontier.len());
         for n in frontier.drain(..) {
             if visited.insert(n.clone()) {
@@ -74,6 +84,7 @@ pub fn run(
         if nodes.is_empty() {
             break;
         }
+        wave_span.record("nodes", nodes.len());
 
         for (f, p) in &nodes {
             tracing::debug!("bfs: visit {} @ ({},{})", f.display(), p.line, p.character);
@@ -83,7 +94,8 @@ pub fn run(
             backend.open(file)?;
         }
 
-        let canonicals = backend.declarations_batch(&nodes)?;
+        let canonicals = tracing::info_span!("bfs.declarations", count = nodes.len())
+            .in_scope(|| backend.declarations_batch(&nodes))?;
 
         let mut canonical_to_query: Vec<(PathBuf, Position)> = Vec::with_capacity(nodes.len());
         for (orig, canon) in nodes.iter().zip(canonicals) {
@@ -105,10 +117,14 @@ pub fn run(
         }
 
         if canonical_to_query.is_empty() {
+            wave += 1;
             continue;
         }
 
-        let all_refs = backend.references_batch(&canonical_to_query)?;
+        let all_refs = tracing::info_span!("bfs.references", count = canonical_to_query.len())
+            .in_scope(|| backend.references_batch(&canonical_to_query))?;
+        let refs_total: usize = all_refs.iter().map(|r| r.len()).sum();
+        wave_span.record("refs_total", refs_total);
 
         let mut to_query: Vec<PathBuf> = Vec::new();
         let mut seen: HashSet<PathBuf> = HashSet::new();
@@ -129,7 +145,8 @@ pub fn run(
             for f in &to_query {
                 backend.open(f)?;
             }
-            let symbols_vec = backend.document_symbols_batch(&to_query)?;
+            let symbols_vec = tracing::info_span!("bfs.document_symbols", count = to_query.len())
+                .in_scope(|| backend.document_symbols_batch(&to_query))?;
             for (f, s) in to_query.into_iter().zip(symbols_vec) {
                 symbol_cache.insert(f, s);
             }
@@ -169,6 +186,7 @@ pub fn run(
             }
         }
         frontier = next;
+        wave += 1;
     }
     Ok(affected)
 }
