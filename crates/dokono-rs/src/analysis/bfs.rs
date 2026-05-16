@@ -21,11 +21,10 @@
 //! sequential `pop_front` would serialize on RTT.
 
 use anyhow::Result;
+use dokono_core::symbols;
 use dokono_core::types::{DocumentSymbol, Location, Position};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-
-use super::symbols;
 
 /// LSP surface used by the BFS; trait-shaped so tests can inject a fake.
 pub trait LspBackend {

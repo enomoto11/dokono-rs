@@ -57,7 +57,7 @@ fn run_default(cli: Cli) -> Result<()> {
     };
 
     reporter.phase("diffing changes ...");
-    let changes = analysis::diff::run(&workspace, &base, &head)?;
+    let changes = dokono_core::diff::changes_between(&workspace, &base, &head)?;
     if changes.is_empty() {
         reporter.finish();
         return output::emit(
@@ -74,7 +74,7 @@ fn run_default(cli: Cli) -> Result<()> {
     }
 
     reporter.phase("loading entrypoints ...");
-    let entrypoints: HashSet<PathBuf> = analysis::entrypoints::load(&workspace)?
+    let entrypoints: HashSet<PathBuf> = dokono_core::entrypoints::load_bin_entrypoints(&workspace)?
         .into_iter()
         .filter_map(|p| p.canonicalize().ok())
         .collect();
@@ -102,7 +102,7 @@ fn run_default(cli: Cli) -> Result<()> {
         };
         backend.open(&abs)?;
         let symbols = backend.document_symbols(&abs)?;
-        for hit in analysis::symbols::pick_at_lines(&symbols, &change.lines) {
+        for hit in dokono_core::symbols::pick_at_lines(&symbols, &change.lines) {
             starts.push((abs.clone(), hit.position));
         }
     }
@@ -153,7 +153,7 @@ fn run_default(cli: Cli) -> Result<()> {
 fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
     match cmd {
         DebugCmd::PrintDiff { base, head } => {
-            let changes = analysis::diff::run(workspace, &base, &head)?;
+            let changes = dokono_core::diff::changes_between(workspace, &base, &head)?;
             if changes.is_empty() {
                 println!("(no .rs file changes between {base} and {head})");
             } else {
@@ -164,7 +164,7 @@ fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
             Ok(())
         }
         DebugCmd::PrintEntrypoints => {
-            let bins = analysis::entrypoints::load(workspace)?;
+            let bins = dokono_core::entrypoints::load_bin_entrypoints(workspace)?;
             if bins.is_empty() {
                 println!("(no binary entrypoints in {})", workspace.display());
             } else {

@@ -13,7 +13,7 @@ pub struct ChangedFile {
     pub lines: Vec<u32>,
 }
 
-pub fn run(workspace: &Path, base: &str, head: &str) -> Result<Vec<ChangedFile>> {
+pub fn changes_between(workspace: &Path, base: &str, head: &str) -> Result<Vec<ChangedFile>> {
     let repo = gix::open(workspace)
         .with_context(|| format!("failed to open git repo at {}", workspace.display()))?;
     let from = tree_for_rev(&repo, base)?;

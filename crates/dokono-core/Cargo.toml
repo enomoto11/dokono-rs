@@ -8,3 +8,6 @@ repository = "https://github.com/enomoto11/dokono-rs"
 readme = "README.md"
 
 [dependencies]
+anyhow = "1"
+cargo_metadata = "0.18"
+gix = { version = "0.83.0", features = ["blocking-http-transport-reqwest-rust-tls"] }

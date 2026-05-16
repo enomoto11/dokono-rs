@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use cargo_metadata::MetadataCommand;
 use std::path::{Path, PathBuf};
 
-pub fn load(workspace: &Path) -> Result<Vec<PathBuf>> {
+pub fn load_bin_entrypoints(workspace: &Path) -> Result<Vec<PathBuf>> {
     let manifest = workspace.join("Cargo.toml");
     let metadata = MetadataCommand::new()
         .manifest_path(&manifest)
@@ -31,10 +31,16 @@ pub fn load(workspace: &Path) -> Result<Vec<PathBuf>> {
 mod tests {
     use super::*;
 
+    fn dokono_rs_crate() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crates/")
+            .join("dokono-rs")
+    }
+
     #[test]
-    fn discovers_own_main_rs() {
-        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let bins = load(workspace).unwrap();
+    fn discovers_main_rs() {
+        let bins = load_bin_entrypoints(&dokono_rs_crate()).unwrap();
         assert!(
             bins.iter().any(|p| p.ends_with("src/main.rs")),
             "expected to find src/main.rs in {bins:?}"
@@ -43,8 +49,7 @@ mod tests {
 
     #[test]
     fn does_not_include_lib_or_examples() {
-        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let bins = load(workspace).unwrap();
+        let bins = load_bin_entrypoints(&dokono_rs_crate()).unwrap();
         for p in &bins {
             assert!(
                 !p.to_string_lossy().contains("/examples/"),
