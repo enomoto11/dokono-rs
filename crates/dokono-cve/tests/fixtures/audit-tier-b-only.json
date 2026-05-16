@@ -1,0 +1,51 @@
+{
+  "database": {
+    "advisory-count": 1,
+    "last-commit": null,
+    "last-updated": null
+  },
+  "lockfile": {
+    "dependency-count": 1
+  },
+  "settings": {
+    "target_arch": [],
+    "target_os": [],
+    "severity": null,
+    "ignore": [],
+    "informational_warnings": []
+  },
+  "vulnerabilities": {
+    "found": true,
+    "count": 1,
+    "list": [
+      {
+        "advisory": {
+          "id": "RUSTSEC-2099-0001",
+          "package": "hyper",
+          "title": "fixture",
+          "description": "fixture",
+          "date": "2099-01-01",
+          "collection": "crates",
+          "cvss": null,
+          "informational": null,
+          "source": null,
+          "url": null,
+          "withdrawn": null
+        },
+        "versions": {
+          "patched": [">= 1.0.0"],
+          "unaffected": []
+        },
+        "affected": null,
+        "package": {
+          "name": "hyper",
+          "version": "0.14.0",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": null,
+          "dependencies": []
+        }
+      }
+    ]
+  },
+  "warnings": {}
+}
