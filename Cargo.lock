@@ -432,6 +432,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "dokono-core"
+version = "0.4.0"
+
+[[package]]
 name = "dokono-rs"
 version = "0.4.0"
 dependencies = [

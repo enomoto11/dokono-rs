@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["crates/dokono-rs"]
+members = ["crates/dokono-core", "crates/dokono-rs"]
