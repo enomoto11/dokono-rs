@@ -1,5 +1,5 @@
 mod cli;
-mod lsp;
+mod debug;
 mod output;
 
 use anyhow::{Context, Result};
@@ -174,13 +174,13 @@ fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
             }
             Ok(())
         }
-        DebugCmd::SpawnOnly => lsp::debug::spawn_only(workspace),
-        DebugCmd::Index => lsp::debug::index(workspace),
-        DebugCmd::Symbols { file, line } => lsp::debug::symbols(workspace, &file, line),
+        DebugCmd::SpawnOnly => debug::spawn_only(workspace),
+        DebugCmd::Index => debug::index(workspace),
+        DebugCmd::Symbols { file, line } => debug::symbols(workspace, &file, line),
         DebugCmd::References {
             file,
             line,
             character,
-        } => lsp::debug::references(workspace, &file, line, character),
+        } => debug::references(workspace, &file, line, character),
     }
 }
