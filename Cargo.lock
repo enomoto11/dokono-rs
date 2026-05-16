@@ -436,8 +436,18 @@ name = "dokono-core"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "async-lsp",
  "cargo_metadata",
+ "futures",
  "gix",
+ "lsp-types",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "url",
 ]
 
 [[package]]

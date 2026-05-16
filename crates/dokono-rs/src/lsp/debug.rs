@@ -12,7 +12,7 @@ use std::time::Instant;
 use crate::lsp::backend::{
     document_symbol_params, open_document, parse_document_symbols, references_params,
 };
-use crate::lsp::{client::Client, lifecycle, progress};
+use dokono_core::lsp::{client::Client, lifecycle, progress};
 use dokono_core::symbols;
 use dokono_core::types as at;
 

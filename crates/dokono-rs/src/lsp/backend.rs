@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use url::Url;
 
 use crate::analysis::bfs::LspBackend;
-use crate::lsp::client::Client;
+use dokono_core::lsp::client::Client;
 use dokono_core::types::{self as at};
 
 fn at_position(p: lsp_types::Position) -> at::Position {

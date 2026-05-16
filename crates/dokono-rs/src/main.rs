@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use analysis::bfs::LspBackend;
 use cli::{Cli, Command, DebugCmd};
 use dokono_core::git;
+use dokono_core::lsp::{client, lifecycle, progress};
 use lsp::backend::Backend;
 use output::{Reporter, Status, Summary};
 
@@ -84,14 +85,14 @@ fn run_default(cli: Cli) -> Result<()> {
     }
 
     reporter.phase("spawning rust-analyzer ...");
-    let mut client = lsp::client::Client::spawn(&workspace)?;
+    let mut client = client::Client::spawn(&workspace)?;
     reporter.phase(format!(
         "rust-analyzer started (pid={})",
         client.pid().unwrap_or_default()
     ));
-    lsp::lifecycle::initialize(&mut client, &workspace)?;
+    lifecycle::initialize(&mut client, &workspace)?;
     reporter.phase("indexing workspace ...");
-    lsp::progress::wait_for_index_end(&client)?;
+    progress::wait_for_index_end(&client)?;
 
     reporter.phase("locating changed symbols ...");
     let mut backend = Backend::new(&client, workspace.clone());
@@ -107,7 +108,7 @@ fn run_default(cli: Cli) -> Result<()> {
         }
     }
     if starts.is_empty() {
-        lsp::lifecycle::shutdown(&mut client)?;
+        lifecycle::shutdown(&mut client)?;
         reporter.finish();
         return output::emit(
             format,
@@ -125,7 +126,7 @@ fn run_default(cli: Cli) -> Result<()> {
     reporter.phase("tracing references (BFS) ...");
     let affected = analysis::bfs::run(&mut backend, starts, &entrypoints)?;
 
-    lsp::lifecycle::shutdown(&mut client)?;
+    lifecycle::shutdown(&mut client)?;
     reporter.finish();
 
     let affected_rel: Vec<String> = affected
