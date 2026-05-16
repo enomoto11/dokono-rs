@@ -443,6 +443,7 @@ dependencies = [
  "async-lsp",
  "cargo_metadata",
  "clap",
+ "dokono-core",
  "futures",
  "gix",
  "indicatif",

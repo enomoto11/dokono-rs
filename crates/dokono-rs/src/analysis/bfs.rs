@@ -20,8 +20,8 @@
 //! documentSymbol) so rust-analyzer can overlap them on its thread pool;
 //! sequential `pop_front` would serialize on RTT.
 
-use super::types::{DocumentSymbol, Location, Position};
 use anyhow::Result;
+use dokono_core::types::{DocumentSymbol, Location, Position};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -175,8 +175,8 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::super::types::Range;
     use super::*;
+    use dokono_core::types::Range;
     use std::collections::HashMap;
 
     /// Stubbed `LspBackend` for unit tests. `declaration` defaults to no-jump unless

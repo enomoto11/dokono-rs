@@ -10,11 +10,11 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::analysis::symbols;
-use crate::analysis::types as at;
 use crate::lsp::backend::{
     document_symbol_params, open_document, parse_document_symbols, references_params,
 };
 use crate::lsp::{client::Client, lifecycle, progress};
+use dokono_core::types as at;
 
 pub fn spawn_only(workspace: &Path) -> Result<()> {
     let client = Client::spawn(workspace)?;

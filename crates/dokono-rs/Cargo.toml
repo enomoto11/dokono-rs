@@ -19,6 +19,7 @@ name = "dokono"
 path = "src/main.rs"
 
 [dependencies]
+dokono-core = { path = "../dokono-core", version = "0.4.0" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = "1"

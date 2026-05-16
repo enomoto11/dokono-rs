@@ -19,37 +19,31 @@ use std::path::{Path, PathBuf};
 use url::Url;
 
 use crate::analysis::bfs::LspBackend;
-use crate::analysis::types::{self as at};
 use crate::lsp::client::Client;
+use dokono_core::types::{self as at};
 
-impl From<lsp_types::Position> for at::Position {
-    fn from(p: lsp_types::Position) -> Self {
-        Self {
-            line: p.line,
-            character: p.character,
-        }
+fn at_position(p: lsp_types::Position) -> at::Position {
+    at::Position {
+        line: p.line,
+        character: p.character,
     }
 }
 
-impl From<lsp_types::Range> for at::Range {
-    fn from(r: lsp_types::Range) -> Self {
-        Self {
-            start: r.start.into(),
-            end: r.end.into(),
-        }
+fn at_range(r: lsp_types::Range) -> at::Range {
+    at::Range {
+        start: at_position(r.start),
+        end: at_position(r.end),
     }
 }
 
-impl From<lsp_types::Location> for at::Location {
-    fn from(loc: lsp_types::Location) -> Self {
-        let path = loc
-            .uri
-            .to_file_path()
-            .unwrap_or_else(|_| PathBuf::from(loc.uri.path()));
-        Self {
-            path,
-            range: loc.range.into(),
-        }
+fn at_location(loc: lsp_types::Location) -> at::Location {
+    let path = loc
+        .uri
+        .to_file_path()
+        .unwrap_or_else(|_| PathBuf::from(loc.uri.path()));
+    at::Location {
+        path,
+        range: at_range(loc.range),
     }
 }
 
@@ -58,8 +52,8 @@ fn convert_symbols(symbols: Vec<lsp_types::DocumentSymbol>) -> Vec<at::DocumentS
         .into_iter()
         .map(|s| at::DocumentSymbol {
             name: s.name,
-            range: s.range.into(),
-            selection_range: s.selection_range.into(),
+            range: at_range(s.range),
+            selection_range: at_range(s.selection_range),
             children: s.children.map(convert_symbols).unwrap_or_default(),
         })
         .collect()
@@ -127,7 +121,7 @@ impl LspBackend for Backend<'_> {
                 Ok(opt) => out.push(
                     filter_workspace_locations(opt.unwrap_or_default(), &self.workspace_root)
                         .into_iter()
-                        .map(at::Location::from)
+                        .map(at_location)
                         .collect(),
                 ),
                 Err(e) if is_lsp_internal_error(&e) => {
@@ -277,7 +271,7 @@ fn filter_workspace_locations(
             if path.starts_with(workspace_root) {
                 true
             } else {
-                log_external("references", &path, loc.range.start.into());
+                log_external("references", &path, at_position(loc.range.start));
                 false
             }
         })
@@ -297,7 +291,7 @@ fn parse_declaration(
                 .uri
                 .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
-            (p, loc.range.start.into())
+            (p, at_position(loc.range.start))
         }
         Some(GotoDeclarationResponse::Array(locs)) => {
             let Some(loc) = locs.into_iter().next() else {
@@ -307,7 +301,7 @@ fn parse_declaration(
                 .uri
                 .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
-            (p, loc.range.start.into())
+            (p, at_position(loc.range.start))
         }
         Some(GotoDeclarationResponse::Link(links)) => {
             let Some(link) = links.into_iter().next() else {
@@ -317,7 +311,7 @@ fn parse_declaration(
                 .target_uri
                 .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
-            (p, link.target_selection_range.start.into())
+            (p, at_position(link.target_selection_range.start))
         }
         None => return (file.to_path_buf(), pos),
     };
