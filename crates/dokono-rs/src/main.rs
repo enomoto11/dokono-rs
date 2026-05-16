@@ -1,4 +1,3 @@
-mod analysis;
 mod cli;
 mod lsp;
 mod output;
@@ -8,11 +7,11 @@ use clap::Parser;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use analysis::bfs::LspBackend;
 use cli::{Cli, Command, DebugCmd};
+use dokono_core::bfs::{self, LspBackend};
 use dokono_core::git;
+use dokono_core::lsp::backend::Backend;
 use dokono_core::lsp::{client, lifecycle, progress};
-use lsp::backend::Backend;
 use output::{Reporter, Status, Summary};
 
 fn main() -> Result<()> {
@@ -124,7 +123,7 @@ fn run_default(cli: Cli) -> Result<()> {
     }
 
     reporter.phase("tracing references (BFS) ...");
-    let affected = analysis::bfs::run(&mut backend, starts, &entrypoints)?;
+    let affected = bfs::run(&mut backend, starts, &entrypoints)?;
 
     lifecycle::shutdown(&mut client)?;
     reporter.finish();

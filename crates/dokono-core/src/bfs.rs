@@ -20,9 +20,9 @@
 //! documentSymbol) so rust-analyzer can overlap them on its thread pool;
 //! sequential `pop_front` would serialize on RTT.
 
+use crate::symbols;
+use crate::types::{DocumentSymbol, Location, Position};
 use anyhow::Result;
-use dokono_core::symbols;
-use dokono_core::types::{DocumentSymbol, Location, Position};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -53,15 +53,61 @@ pub trait LspBackend {
     }
 }
 
+/// Traversal direction. `Upward` walks from a symbol to its callers (today's
+/// behavior); `Downward` walks from a symbol to its callees (for callee-side
+/// reachability tools, not yet implemented).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BfsDirection {
+    Upward,
+    Downward,
+}
+
+/// For each visited `(file, pos)`, the predecessor `(file, pos)` it was
+/// discovered from. Roots (entries in `starts`) map to `None`.
+pub type ParentMap = HashMap<(PathBuf, Position), Option<(PathBuf, Position)>>;
+
+pub struct BfsResult {
+    pub affected: BTreeSet<PathBuf>,
+    pub parents: ParentMap,
+}
+
 pub fn run(
     backend: &mut dyn LspBackend,
     starts: Vec<(PathBuf, Position)>,
     entrypoints: &HashSet<PathBuf>,
 ) -> Result<BTreeSet<PathBuf>> {
-    let mut frontier: Vec<(PathBuf, Position)> = starts;
+    let BfsResult { affected, .. } =
+        run_with_parents(backend, starts, entrypoints, BfsDirection::Upward)?;
+    Ok(affected)
+}
+
+pub fn run_with_parents(
+    backend: &mut dyn LspBackend,
+    starts: Vec<(PathBuf, Position)>,
+    entrypoints: &HashSet<PathBuf>,
+    direction: BfsDirection,
+) -> Result<BfsResult> {
+    match direction {
+        BfsDirection::Upward => run_upward(backend, starts, entrypoints),
+        BfsDirection::Downward => {
+            unimplemented!("downward BFS is not yet implemented; tracked for dokono-deadcode")
+        }
+    }
+}
+
+fn run_upward(
+    backend: &mut dyn LspBackend,
+    starts: Vec<(PathBuf, Position)>,
+    entrypoints: &HashSet<PathBuf>,
+) -> Result<BfsResult> {
+    let mut frontier: Vec<(PathBuf, Position)> = starts.clone();
     let mut visited: HashSet<(PathBuf, Position)> = HashSet::new();
     let mut affected: BTreeSet<PathBuf> = BTreeSet::new();
     let mut symbol_cache: HashMap<PathBuf, Vec<DocumentSymbol>> = HashMap::new();
+    let mut parents: ParentMap = HashMap::new();
+    for s in &starts {
+        parents.entry(s.clone()).or_insert(None);
+    }
 
     while !frontier.is_empty() {
         let mut nodes: Vec<(PathBuf, Position)> = Vec::with_capacity(frontier.len());
@@ -93,6 +139,9 @@ pub fn run(
             if !visited.insert(canon.clone()) {
                 continue;
             }
+            parents
+                .entry(canon.clone())
+                .or_insert_with(|| Some(orig.clone()));
             backend.open(&canon.0)?;
             tracing::debug!(
                 "bfs: canonicalized → {} @ ({},{}) (trait method)",
@@ -135,7 +184,7 @@ pub fn run(
         }
 
         let mut next: Vec<(PathBuf, Position)> = Vec::new();
-        for refs in all_refs {
+        for (parent, refs) in canonical_to_query.iter().zip(all_refs) {
             for r in refs {
                 if entrypoints.contains(&r.path) {
                     tracing::debug!("bfs: ref → entrypoint {}", r.path.display());
@@ -163,19 +212,23 @@ pub fn run(
                         hit.position.line,
                         hit.position.character
                     );
-                    next.push((r.path.clone(), hit.position));
+                    let child = (r.path.clone(), hit.position);
+                    parents
+                        .entry(child.clone())
+                        .or_insert_with(|| Some(parent.clone()));
+                    next.push(child);
                 }
             }
         }
         frontier = next;
     }
-    Ok(affected)
+    Ok(BfsResult { affected, parents })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dokono_core::types::Range;
+    use crate::types::Range;
     use std::collections::HashMap;
 
     /// Stubbed `LspBackend` for unit tests. `declaration` defaults to no-jump unless

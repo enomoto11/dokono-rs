@@ -1,4 +1,4 @@
-//! `analysis::bfs::LspBackend` implementation backed by [`Client`].
+//! [`LspBackend`] implementation backed by [`Client`].
 //!
 //! All `lsp_types` request/notification construction and response parsing
 //! lives here so the rest of the crate stays free of LSP protocol details.
@@ -18,32 +18,38 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use url::Url;
 
-use crate::analysis::bfs::LspBackend;
-use dokono_core::lsp::client::Client;
-use dokono_core::types::{self as at};
+use crate::bfs::LspBackend;
+use crate::lsp::client::Client;
+use crate::types::{self as at};
 
-fn at_position(p: lsp_types::Position) -> at::Position {
-    at::Position {
-        line: p.line,
-        character: p.character,
+impl From<lsp_types::Position> for at::Position {
+    fn from(p: lsp_types::Position) -> Self {
+        Self {
+            line: p.line,
+            character: p.character,
+        }
     }
 }
 
-fn at_range(r: lsp_types::Range) -> at::Range {
-    at::Range {
-        start: at_position(r.start),
-        end: at_position(r.end),
+impl From<lsp_types::Range> for at::Range {
+    fn from(r: lsp_types::Range) -> Self {
+        Self {
+            start: r.start.into(),
+            end: r.end.into(),
+        }
     }
 }
 
-fn at_location(loc: lsp_types::Location) -> at::Location {
-    let path = loc
-        .uri
-        .to_file_path()
-        .unwrap_or_else(|_| PathBuf::from(loc.uri.path()));
-    at::Location {
-        path,
-        range: at_range(loc.range),
+impl From<lsp_types::Location> for at::Location {
+    fn from(loc: lsp_types::Location) -> Self {
+        let path = loc
+            .uri
+            .to_file_path()
+            .unwrap_or_else(|_| PathBuf::from(loc.uri.path()));
+        Self {
+            path,
+            range: loc.range.into(),
+        }
     }
 }
 
@@ -52,8 +58,8 @@ fn convert_symbols(symbols: Vec<lsp_types::DocumentSymbol>) -> Vec<at::DocumentS
         .into_iter()
         .map(|s| at::DocumentSymbol {
             name: s.name,
-            range: at_range(s.range),
-            selection_range: at_range(s.selection_range),
+            range: s.range.into(),
+            selection_range: s.selection_range.into(),
             children: s.children.map(convert_symbols).unwrap_or_default(),
         })
         .collect()
@@ -121,7 +127,7 @@ impl LspBackend for Backend<'_> {
                 Ok(opt) => out.push(
                     filter_workspace_locations(opt.unwrap_or_default(), &self.workspace_root)
                         .into_iter()
-                        .map(at_location)
+                        .map(at::Location::from)
                         .collect(),
                 ),
                 Err(e) if is_lsp_internal_error(&e) => {
@@ -199,7 +205,7 @@ impl LspBackend for Backend<'_> {
     }
 }
 
-pub(crate) fn open_document(client: &Client, file: &Path) -> Result<()> {
+pub fn open_document(client: &Client, file: &Path) -> Result<()> {
     let text = std::fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
@@ -211,11 +217,11 @@ pub(crate) fn open_document(client: &Client, file: &Path) -> Result<()> {
     })
 }
 
-pub(crate) fn file_uri(file: &Path) -> Result<Url> {
+pub fn file_uri(file: &Path) -> Result<Url> {
     Url::from_file_path(file).map_err(|_| anyhow!("not absolute path: {}", file.display()))
 }
 
-pub(crate) fn document_symbol_params(file: &Path) -> Result<DocumentSymbolParams> {
+pub fn document_symbol_params(file: &Path) -> Result<DocumentSymbolParams> {
     Ok(DocumentSymbolParams {
         text_document: TextDocumentIdentifier {
             uri: file_uri(file)?,
@@ -225,7 +231,7 @@ pub(crate) fn document_symbol_params(file: &Path) -> Result<DocumentSymbolParams
     })
 }
 
-pub(crate) fn references_params(file: &Path, pos: lsp_types::Position) -> Result<ReferenceParams> {
+pub fn references_params(file: &Path, pos: lsp_types::Position) -> Result<ReferenceParams> {
     Ok(ReferenceParams {
         text_document_position: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier {
@@ -271,7 +277,7 @@ fn filter_workspace_locations(
             if path.starts_with(workspace_root) {
                 true
             } else {
-                log_external("references", &path, at_position(loc.range.start));
+                log_external("references", &path, loc.range.start.into());
                 false
             }
         })
@@ -291,7 +297,7 @@ fn parse_declaration(
                 .uri
                 .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
-            (p, at_position(loc.range.start))
+            (p, loc.range.start.into())
         }
         Some(GotoDeclarationResponse::Array(locs)) => {
             let Some(loc) = locs.into_iter().next() else {
@@ -301,7 +307,7 @@ fn parse_declaration(
                 .uri
                 .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
-            (p, at_position(loc.range.start))
+            (p, loc.range.start.into())
         }
         Some(GotoDeclarationResponse::Link(links)) => {
             let Some(link) = links.into_iter().next() else {
@@ -311,7 +317,7 @@ fn parse_declaration(
                 .target_uri
                 .to_file_path()
                 .unwrap_or_else(|_| file.to_path_buf());
-            (p, at_position(link.target_selection_range.start))
+            (p, link.target_selection_range.start.into())
         }
         None => return (file.to_path_buf(), pos),
     };
@@ -325,7 +331,7 @@ fn parse_declaration(
 /// `DocumentSymbolResponse` is `#[serde(untagged)]` and lists `Flat` first, so
 /// an empty `[]` deserializes as `Flat(vec![])` even when
 /// hierarchicalDocumentSymbolSupport is declared. Treat it as no symbols.
-pub(crate) fn parse_document_symbols(
+pub fn parse_document_symbols(
     response: Option<DocumentSymbolResponse>,
     file: &Path,
 ) -> Result<Vec<lsp_types::DocumentSymbol>> {

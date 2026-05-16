@@ -455,22 +455,14 @@ name = "dokono-rs"
 version = "0.4.0"
 dependencies = [
  "anyhow",
- "async-lsp",
- "cargo_metadata",
  "clap",
  "dokono-core",
- "futures",
- "gix",
  "indicatif",
  "lsp-types",
  "serde",
  "serde_json",
- "tokio",
- "tokio-util",
- "tower",
  "tracing",
  "tracing-subscriber",
- "url",
 ]
 
 [[package]]

@@ -9,7 +9,7 @@ use lsp_types::{DocumentSymbolResponse, Location, Position};
 use std::path::Path;
 use std::time::Instant;
 
-use crate::lsp::backend::{
+use dokono_core::lsp::backend::{
     document_symbol_params, open_document, parse_document_symbols, references_params,
 };
 use dokono_core::lsp::{client::Client, lifecycle, progress};
