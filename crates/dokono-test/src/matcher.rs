@@ -142,7 +142,7 @@ impl PackageMap {
             };
             entries.push((root.as_std_path().to_path_buf(), pkg.name.clone()));
         }
-        entries.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
+        entries.sort_by_key(|b| std::cmp::Reverse(b.0.components().count()));
         Ok(Self { entries })
     }
 
