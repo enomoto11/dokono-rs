@@ -4,5 +4,6 @@
 
 pub mod diff;
 pub mod entrypoints;
+pub mod git;
 pub mod symbols;
 pub mod types;

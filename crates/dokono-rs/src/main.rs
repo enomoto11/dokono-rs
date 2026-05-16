@@ -1,6 +1,5 @@
 mod analysis;
 mod cli;
-mod git;
 mod lsp;
 mod output;
 
@@ -11,6 +10,7 @@ use std::path::PathBuf;
 
 use analysis::bfs::LspBackend;
 use cli::{Cli, Command, DebugCmd};
+use dokono_core::git;
 use lsp::backend::Backend;
 use output::{Reporter, Status, Summary};
 
