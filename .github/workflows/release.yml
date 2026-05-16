@@ -23,25 +23,58 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Verify tag matches Cargo.toml version
+      - name: Verify tag matches workspace version
         run: |
           set -e
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          MANIFEST_VERSION=$(cargo metadata --format-version 1 --no-deps \
-            | jq -r '.packages[] | select(.name == "dokono-rs") | .version')
-          if [ "$TAG_VERSION" != "$MANIFEST_VERSION" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match Cargo.toml version $MANIFEST_VERSION"
+          for pkg in dokono-core dokono-rs; do
+            V=$(cargo metadata --format-version 1 --no-deps \
+              | jq -r ".packages[] | select(.name == \"$pkg\") | .version")
+            if [ "$TAG_VERSION" != "$V" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match $pkg version $V"
+              exit 1
+            fi
+          done
+          echo "Tag and manifests match: $TAG_VERSION"
+
+      - name: Verify dokono-rs depends on the same dokono-core version
+        run: |
+          set -e
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          DEP_VERSION=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "dokono-rs") | .dependencies[] | select(.name == "dokono-core") | .req')
+          if [ "$DEP_VERSION" != "^$TAG_VERSION" ] && [ "$DEP_VERSION" != "=$TAG_VERSION" ] && [ "$DEP_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::dokono-rs depends on dokono-core $DEP_VERSION but tag is $TAG_VERSION"
             exit 1
           fi
-          echo "Tag and manifest version match: $TAG_VERSION"
 
       - name: Run tests
         run: cargo test --all-targets --locked
 
-      - name: Publish to crates.io
+      - name: Publish dokono-core
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked
+        run: cargo publish -p dokono-core --locked
+
+      - name: Wait for dokono-core to be available on crates.io index
+        run: |
+          set -e
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 30); do
+            if cargo search dokono-core --limit 1 | grep -q "^dokono-core = \"$TAG_VERSION\""; then
+              echo "dokono-core $TAG_VERSION is indexed"
+              exit 0
+            fi
+            echo "waiting for index propagation ($i/30)..."
+            sleep 10
+          done
+          echo "::error::dokono-core $TAG_VERSION did not appear in the index after 5 min"
+          exit 1
+
+      - name: Publish dokono-rs
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p dokono-rs --locked
 
       - name: Create GitHub Release
         env:

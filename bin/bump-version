@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+  echo "usage: $0 <new-version>" >&2
+  echo "example: $0 0.5.0" >&2
+  exit 1
+fi
+
+NEW="$1"
+
+if ! echo "$NEW" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+  echo "error: version must be X.Y.Z (got: $NEW)" >&2
+  exit 1
+fi
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+CURRENT=$(grep -E '^version = "' Cargo.toml | head -1 | sed -E 's/^version = "([^"]+)"/\1/')
+if [ -z "$CURRENT" ]; then
+  echo "error: could not read current version from Cargo.toml" >&2
+  exit 1
+fi
+
+if [ "$CURRENT" = "$NEW" ]; then
+  echo "version is already $NEW; nothing to do"
+  exit 0
+fi
+
+echo "bumping $CURRENT -> $NEW"
+
+# Anchor on the line we want so we don't touch any other "version = ..." string.
+sed -i.bak -E "s/^version = \"$CURRENT\"$/version = \"$NEW\"/" Cargo.toml
+rm Cargo.toml.bak
+
+# Only touches the dokono-core dep line; other deps' versions are left alone.
+sed -i.bak -E "s|(dokono-core = \\{[^}]*version = )\"$CURRENT\"|\\1\"$NEW\"|" crates/dokono-rs/Cargo.toml
+rm crates/dokono-rs/Cargo.toml.bak
+
+if git diff --quiet Cargo.toml crates/dokono-rs/Cargo.toml; then
+  echo "error: no changes were made — check the version pattern in Cargo.toml files" >&2
+  exit 1
+fi
+
+echo "updating Cargo.lock ..."
+cargo check --workspace --quiet
+
+echo
+echo "done. next steps:"
+echo "  git add -A && git commit -m 'release: v$NEW'"
+echo "  git push origin main"
+echo "  git tag v$NEW"
+echo "  git push origin v$NEW"

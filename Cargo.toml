@@ -1,38 +1,10 @@
-[package]
-name = "dokono-rs"
+[workspace]
+resolver = "3"
+members = ["crates/dokono-core", "crates/dokono-rs"]
+
+[workspace.package]
 version = "0.4.0"
 edition = "2024"
-description = "Detect which binary entrypoints in a Rust workspace are affected by code changes, without building, by driving rust-analyzer over LSP."
 license = "MIT"
 repository = "https://github.com/enomoto11/dokono-rs"
 homepage = "https://github.com/enomoto11/dokono-rs"
-documentation = "https://github.com/enomoto11/dokono-rs"
-readme = "README.md"
-keywords = ["cli", "rust-analyzer", "lsp", "workspace", "impact-analysis"]
-categories = ["command-line-utilities", "development-tools"]
-exclude = [
-    "/.github",
-    "/tests/fixtures",
-]
-
-[[bin]]
-name = "dokono"
-path = "src/main.rs"
-
-[dependencies]
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-serde = "1"
-serde_json = "1"
-lsp-types = "0.95"
-cargo_metadata = "0.18"
-url = "2"
-indicatif = "0.17"
-gix = { version = "0.83.0", features = ["blocking-http-transport-reqwest-rust-tls"] }
-async-lsp = { version = "0.2", default-features = false, features = ["omni-trait"] }
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "process", "io-util", "sync", "time"] }
-tokio-util = { version = "0.7", features = ["compat"] }
-tower = "0.5"
-futures = "0.3"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }

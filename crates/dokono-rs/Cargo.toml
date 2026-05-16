@@ -1,0 +1,30 @@
+[package]
+name = "dokono-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Detect which binary entrypoints in a Rust workspace are affected by code changes, without building, by driving rust-analyzer over LSP."
+documentation = "https://github.com/enomoto11/dokono-rs"
+readme = "README.md"
+keywords = ["cli", "rust-analyzer", "lsp", "workspace", "impact-analysis"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = [
+    "tests/fixtures",
+]
+
+[[bin]]
+name = "dokono"
+path = "src/main.rs"
+
+[dependencies]
+dokono-core = { path = "../dokono-core", version = "0.4.0" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+lsp-types = "0.95"
+serde = "1"
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -3,7 +3,7 @@
 //! the child, so that BFS starts from the function body that was edited rather
 //! than from the surrounding `impl` block.
 
-use super::types::{DocumentSymbol, Position, Range};
+use crate::types::{DocumentSymbol, Position, Range};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolHit {

@@ -1,4 +1,4 @@
-//! `analysis::bfs::LspBackend` implementation backed by [`Client`].
+//! [`LspBackend`] implementation backed by [`Client`].
 //!
 //! All `lsp_types` request/notification construction and response parsing
 //! lives here so the rest of the crate stays free of LSP protocol details.
@@ -18,9 +18,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use url::Url;
 
-use crate::analysis::bfs::LspBackend;
-use crate::analysis::types::{self as at};
+use crate::bfs::LspBackend;
 use crate::lsp::client::Client;
+use crate::types::{self as at};
 
 impl From<lsp_types::Position> for at::Position {
     fn from(p: lsp_types::Position) -> Self {
@@ -205,7 +205,7 @@ impl LspBackend for Backend<'_> {
     }
 }
 
-pub(crate) fn open_document(client: &Client, file: &Path) -> Result<()> {
+pub fn open_document(client: &Client, file: &Path) -> Result<()> {
     let text = std::fs::read_to_string(file).with_context(|| format!("read {}", file.display()))?;
     client.notify::<DidOpenTextDocument>(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
@@ -217,11 +217,11 @@ pub(crate) fn open_document(client: &Client, file: &Path) -> Result<()> {
     })
 }
 
-pub(crate) fn file_uri(file: &Path) -> Result<Url> {
+pub fn file_uri(file: &Path) -> Result<Url> {
     Url::from_file_path(file).map_err(|_| anyhow!("not absolute path: {}", file.display()))
 }
 
-pub(crate) fn document_symbol_params(file: &Path) -> Result<DocumentSymbolParams> {
+pub fn document_symbol_params(file: &Path) -> Result<DocumentSymbolParams> {
     Ok(DocumentSymbolParams {
         text_document: TextDocumentIdentifier {
             uri: file_uri(file)?,
@@ -231,7 +231,7 @@ pub(crate) fn document_symbol_params(file: &Path) -> Result<DocumentSymbolParams
     })
 }
 
-pub(crate) fn references_params(file: &Path, pos: lsp_types::Position) -> Result<ReferenceParams> {
+pub fn references_params(file: &Path, pos: lsp_types::Position) -> Result<ReferenceParams> {
     Ok(ReferenceParams {
         text_document_position: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier {
@@ -331,7 +331,7 @@ fn parse_declaration(
 /// `DocumentSymbolResponse` is `#[serde(untagged)]` and lists `Flat` first, so
 /// an empty `[]` deserializes as `Flat(vec![])` even when
 /// hierarchicalDocumentSymbolSupport is declared. Treat it as no symbols.
-pub(crate) fn parse_document_symbols(
+pub fn parse_document_symbols(
     response: Option<DocumentSymbolResponse>,
     file: &Path,
 ) -> Result<Vec<lsp_types::DocumentSymbol>> {

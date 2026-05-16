@@ -13,6 +13,8 @@ A CLI tool that detects **which binary entrypoints are affected by a code change
 
 > The name comes from the Japanese word *dokono* (どこの), meaning "of which / from where" — answering the question "which binary is affected?".
 
+This repository is a Cargo workspace: the CLI lives in [`crates/dokono-rs/`](crates/dokono-rs) and shares its analysis machinery with sibling tools via the internal [`crates/dokono-core/`](crates/dokono-core) library.
+
 ---
 
 Contents:
