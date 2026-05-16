@@ -57,7 +57,7 @@ fn run_default(cli: Cli) -> Result<()> {
     };
 
     reporter.phase("diffing changes ...");
-    let changes = dokono_core::diff::changes_between(&workspace, &base, &head)?;
+    let changes = git::changes_between(&workspace, &base, &head)?;
     if changes.is_empty() {
         reporter.finish();
         return output::emit(
@@ -153,7 +153,7 @@ fn run_default(cli: Cli) -> Result<()> {
 fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
     match cmd {
         DebugCmd::PrintDiff { base, head } => {
-            let changes = dokono_core::diff::changes_between(workspace, &base, &head)?;
+            let changes = git::changes_between(workspace, &base, &head)?;
             if changes.is_empty() {
                 println!("(no .rs file changes between {base} and {head})");
             } else {
