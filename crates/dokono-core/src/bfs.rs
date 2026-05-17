@@ -54,8 +54,8 @@ pub trait LspBackend {
 }
 
 /// Traversal direction. `Upward` walks from a symbol to its callers (today's
-/// behavior); `Downward` walks from a symbol to its callees (for callee-side
-/// reachability tools, not yet implemented).
+/// behavior); `Downward` walks from a symbol to its callees (not yet
+/// implemented).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BfsDirection {
     Upward,
@@ -72,7 +72,7 @@ pub struct BfsResult {
     /// References that landed inside an entrypoint file, recorded with the
     /// 0-based LSP position at which the reference appeared. `run()` discards
     /// this; consumers that need position-level resolution inside an entrypoint
-    /// (e.g. dokono-test mapping a hit to its enclosing test function) read it.
+    /// (e.g. to map a hit back to its enclosing symbol) read it.
     pub entry_hits: HashMap<PathBuf, Vec<Position>>,
 }
 
@@ -95,7 +95,7 @@ pub fn run_with_parents(
     match direction {
         BfsDirection::Upward => run_upward(backend, starts, entrypoints),
         BfsDirection::Downward => {
-            unimplemented!("downward BFS is not yet implemented; tracked for dokono-deadcode")
+            unimplemented!("downward BFS is not yet implemented")
         }
     }
 }

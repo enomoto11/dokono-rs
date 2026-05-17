@@ -359,7 +359,7 @@ fn warn_skip(method: &str, where_at: impl std::fmt::Display, e: &anyhow::Error) 
 
 /// Diagnostic for external (std / cargo registry) paths surfaced by the LSP server.
 /// Production behavior is to silently drop them so BFS stays in the workspace; this
-/// log uses `debug` level so it can be enabled via `RUST_LOG=dokono=debug`.
+/// log uses `debug` level so it can be enabled via `RUST_LOG=dokono_core=debug`.
 fn log_external(source: &str, file: &Path, pos: at::Position) {
     tracing::debug!(
         "from {source}: {}:{}:{}",

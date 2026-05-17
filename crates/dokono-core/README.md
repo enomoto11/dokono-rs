@@ -1,8 +1,8 @@
 # dokono-core
 
-Internal library that powers [`dokono-rs`](../dokono-rs) and its planned sibling tools (`dokono-cve-reach`, `dokono-deadcode`, `dokono-blast-radius`, ...).
+Internal library that provides the shared analysis machinery used by the binaries and tools in this workspace.
 
-It provides the shared machinery:
+It provides:
 
 - a rust-analyzer LSP client (spawn, initialize, wait-quiescent, shutdown)
 - batched `references` / `documentSymbol` / `declaration` requests
@@ -10,7 +10,7 @@ It provides the shared machinery:
 - `cargo metadata`-driven binary-entrypoint enumeration
 - git diff parsing via `gix`
 
-**API is unstable. There are no compatibility guarantees pre-1.0; minor releases may break any signature. If you want to detect impacted entrypoints from the command line, install `dokono-rs` instead.**
+**API is unstable. There are no compatibility guarantees pre-1.0; minor releases may break any signature. This crate is not intended for direct end-user consumption — use one of the binaries built on top of it.**
 
 ## Examples
 

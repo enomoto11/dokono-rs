@@ -1,6 +1,6 @@
-//! Internal library for dokono-rs and sibling tools.
+//! Internal analysis library for the dokono workspace.
 //!
-//! API is unstable pre-1.0. Use `dokono-rs` if you want the CLI.
+//! API is unstable pre-1.0. Not intended for direct end-user consumption.
 
 pub mod bfs;
 pub mod entrypoints;
