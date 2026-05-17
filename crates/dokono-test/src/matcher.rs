@@ -273,9 +273,6 @@ mod tests {
         assert_eq!(names, vec!["b".to_string()]);
     }
 
-    /// Step 7: the change site itself sits inside a test function's body. The
-    /// resolver must hit it from `starts` alone, without depending on whether
-    /// BFS happens to add the start position to `parents` first.
     #[test]
     fn resolve_picks_test_via_direct_start_in_test_body() {
         let workspace = PathBuf::from("/ws");
