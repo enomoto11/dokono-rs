@@ -221,7 +221,6 @@ mod tests {
         .into_iter()
         .collect();
 
-        // Visited via `parents` (e.g. direct-change Step 7 path): line 0-based 14 → 15.
         let parents: ParentMap = [
             ((file.clone(), pos(14)), None),
             ((file.clone(), pos(50)), None),
