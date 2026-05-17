@@ -1,6 +1,7 @@
 # dokono-test
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
+[![crates.io](https://img.shields.io/crates/v/dokono-test.svg)](https://crates.io/crates/dokono-test)
 
 A CLI tool that detects **which test functions are affected by a code change** in a Rust workspace, without running a build. It uses [rust-analyzer](https://rust-analyzer.github.io/) over LSP to trace symbol-level reference graphs and [syn](https://crates.io/crates/syn) to statically discover test functions.
 
