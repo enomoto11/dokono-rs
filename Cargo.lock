@@ -433,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "dokono-core"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "async-lsp",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "dokono-rs"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "dokono-test"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "cargo_metadata",
