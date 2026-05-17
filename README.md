@@ -18,7 +18,7 @@ None of these tools invoke `cargo build` or `--emit=dep-info`. Each one traces r
 |---|---|---|---|
 | [`dokono-rs`](crates/dokono-rs/) | CLI (`dokono`) | [![Crates.io](https://img.shields.io/crates/v/dokono-rs.svg)](https://crates.io/crates/dokono-rs) | Which **binary entrypoints** are affected by a change? |
 | [`dokono-test`](crates/dokono-test/) | CLI (`dokono-test`) | [![Crates.io](https://img.shields.io/crates/v/dokono-test.svg)](https://crates.io/crates/dokono-test) | Which **test functions** are affected by a change? |
-| [`dokono-core`](crates/dokono-core/) | Internal library | unpublished | Shared LSP client, BFS engine, git-diff parsing, and `cargo metadata` plumbing used by the CLIs above. API is unstable. |
+| [`dokono-core`](crates/dokono-core/) | Internal library | [![Crates.io](https://img.shields.io/crates/v/dokono-core.svg)] | Shared LSP client, BFS engine, git-diff parsing, and `cargo metadata` plumbing used by the CLIs above. API is unstable. |
 
 Each CLI has its own README with motivation, installation, full usage, and troubleshooting — start there if you want to use one of the tools.
 
@@ -32,7 +32,6 @@ All CLIs follow the same pipeline, implemented once in [`dokono-core`](crates/do
 4. **Match visited positions** against a tool-specific *goal set*:
    - `dokono-rs` → bin entrypoint paths from `cargo metadata`
    - `dokono-test` → `#[test]` / `#[tokio::test]` / ... bodies discovered by `syn`
-   - `dokono-cve` (planned) → vulnerable functions named by an advisory feed
 
 Readiness is detected deterministically by waiting for an `experimental/serverStatus` notification with `quiescent: true` — no fixed sleeps, no bounded retry counts.
 
