@@ -33,14 +33,6 @@ pub fn resolve(
     workspace: &Path,
 ) -> BTreeSet<AffectedTest> {
     let mut out = BTreeSet::new();
-    // Positions to check come from three sources, written so the contract does
-    // not depend on which one happens to carry a given hit:
-    // - `starts`: the change sites themselves, in case the edit landed directly
-    //   inside a test function's body (Step 7).
-    // - `parents`: every visited node, covering BFS-discovered call sites.
-    // - `entry_hits`: positions at which a `references` result landed inside an
-    //   entrypoint (test) file — BFS records these but does not add them to the
-    //   frontier, so they would otherwise be missed.
     let visited = starts
         .iter()
         .map(|(p, pos)| (p, *pos))
