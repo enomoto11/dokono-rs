@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/enomoto11/dokono-rs/main/assets/dokono-rs-logo.png" alt="dokono-rs" width="100%">
-</p>
-
 # dokono-rs
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#license)
