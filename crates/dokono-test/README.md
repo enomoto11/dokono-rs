@@ -12,6 +12,7 @@ A CLI tool that detects **which test functions are affected by a code change** i
 
 Contents:
 
+- [When `dokono-test` is a good fit](#when-dokono-test-is-a-good-fit)
 - [Motivation](#motivation)
 - [How it works](#how-it-works)
 - [Installation](#installation)
@@ -27,15 +28,17 @@ Contents:
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
+## When `dokono-test` is a good fit
+
+- **Test runtime dominates build time.** Cutting hundreds of tests down to only the affected handful translates directly into saved CI minutes per PR.
+- **A few foundational crates fan out across the workspace.** A one-line change in a widely-depended-on crate would otherwise rerun every dependent crate's tests, even ones that never touch the changed symbol.
+- **Two-stage CI is acceptable.** Run affected tests on every PR push for fast feedback and keep the full `cargo test` on the merge queue or a nightly job as a safety net.
+
 ## Motivation
 
 In a Rust workspace, `cargo test` runs every test by default. As a monorepo grows to hundreds or thousands of tests, full test suites become the bottleneck in CI and developer feedback loops.
 
-Cargo's dependency graph resolves at the **crate level**. If you change a single function in a shared `domain` crate, Cargo re-runs every test in every crate that depends on `domain` — even though only a handful of tests might actually call the changed function.
-
-`dokono-test` solves this by walking the reference graph at the **symbol level** through rust-analyzer's LSP interface and mapping BFS-reached positions back to individual test functions discovered by `syn`.
-
-On a workspace with 800+ tests, a typical PR might affect only 3–5 tests. `dokono-test` identifies exactly those, cutting the test execution surface by over 99%.
+However Cargo's dependency graph resolves at the **crate level**, `dokono-test` solves this by walking the reference graph at the **symbol level** through rust-analyzer's LSP interface and mapping BFS-reached positions back to individual test functions discovered by `syn`.
 
 ## How it works
 
