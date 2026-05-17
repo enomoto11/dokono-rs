@@ -208,11 +208,9 @@ dokono-test --workspace . --pr 42 --format json
 
 ```json
 {
-  "schema_version": 1,
   "pr": 42,
   "base": "abc123def456...",
   "head": "dokono-test-pr-42",
-  "status": "ok",
   "affected_tests": [
     {
       "package": "my-domain",
@@ -224,22 +222,18 @@ dokono-test --workspace . --pr 42 --format json
   ],
   "stats": {
     "total_tests": 847,
-    "affected_tests": 3,
-    "reduction_pct": 99.6
+    "affected_tests": 3
   }
 }
 ```
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | int | Currently `1`. Bumped on incompatible schema changes. |
 | `pr` | int \| null | PR number when invoked with `--pr`, otherwise `null`. |
 | `base` / `head` | string | Git refs as resolved by `dokono-test`. |
-| `status` | enum | `ok` \| `no_rs_changes` \| `no_symbol_changes` |
-| `affected_tests` | array | Each entry has `package`, `file`, `name`, `module_path`, `line`. Sorted by `module_path`. Empty unless `status == "ok"`. |
+| `affected_tests` | array | Each entry has `package`, `file`, `name`, `module_path`, `line`. Sorted by `module_path`. Empty when no `.rs` files changed or no symbol-level change was detected. |
 | `stats.total_tests` | int | Total test functions found by `syn` parse across the workspace. |
 | `stats.affected_tests` | int | Number of tests in `affected_tests`. |
-| `stats.reduction_pct` | float | `(1 - affected/total) × 100`, rounded to 1 decimal. Higher means fewer tests to run. |
 
 Example CI snippets:
 

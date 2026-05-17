@@ -67,11 +67,9 @@ fn run_default(cli: Cli) -> Result<()> {
     eprintln!("{} tests across {} files", total_tests, test_files.len());
 
     let mut summary = output::Summary {
-        schema_version: 1,
         pr: cli.pr,
         base: base.clone(),
         head: head.clone(),
-        status: output::Status::Ok,
         affected: BTreeSet::new(),
         total_tests,
     };
@@ -79,7 +77,6 @@ fn run_default(cli: Cli) -> Result<()> {
     eprintln!("diffing changes ...");
     let changes = git::changes_between(&workspace, &base, &head)?;
     if changes.is_empty() {
-        summary.status = output::Status::NoRsChanges;
         return output::emit(cli.format, &summary, &workspace);
     }
 
@@ -114,7 +111,6 @@ fn run_default(cli: Cli) -> Result<()> {
     }
     if starts.is_empty() {
         lifecycle::shutdown(&mut client)?;
-        summary.status = output::Status::NoSymbolChanges;
         return output::emit(cli.format, &summary, &workspace);
     }
     eprintln!("starts: {} symbol(s)", starts.len());
