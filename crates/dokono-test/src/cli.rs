@@ -28,18 +28,6 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 
-    /// Run the affected tests via `cargo test` after detection.
-    #[arg(long)]
-    pub exec: bool,
-
-    /// Restrict scan/exec to these packages (repeatable). Empty means all.
-    #[arg(long = "package")]
-    pub packages: Vec<String>,
-
-    /// Path to a `dokono-test.toml` config file.
-    #[arg(long)]
-    pub config: Option<PathBuf>,
-
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -48,7 +36,6 @@ pub struct Cli {
 pub enum OutputFormat {
     Text,
     Json,
-    Cargo,
 }
 
 #[derive(Subcommand, Debug)]

@@ -81,7 +81,7 @@ flowchart TD
     match --> output
 
     subgraph stage6 ["⑥ Output  (dokono-test::output)"]
-        output["text / JSON / cargo"]
+        output["text / JSON"]
     end
 
     style stage1 fill:#f0f0f0,stroke:#999
@@ -180,7 +180,7 @@ dokono-test --workspace /path/to/your-workspace --head my-feature-branch
 
 ### Output formats
 
-Three output formats are supported, selected with `--format` (default: `text`).
+Two output formats are supported, selected with `--format` (default: `text`).
 
 #### `--format text` (human-friendly)
 
@@ -241,11 +241,19 @@ dokono-test --workspace . --pr 42 --format json
 | `stats.affected_tests` | int | Number of tests in `affected_tests`. |
 | `stats.reduction_pct` | float | `(1 - affected/total) × 100`, rounded to 1 decimal. Higher means fewer tests to run. |
 
-Example CI snippet:
+Example CI snippets:
 
 ```bash
-# Run only the affected tests
-dokono-test --workspace . --pr "$PR" --format cargo | bash
+# Run only the affected tests with cargo test, grouped by package
+dokono-test --workspace . --pr "$PR" --format json \
+  | jq -r '.affected_tests | group_by(.package)[] |
+           "cargo test -p \(.[0].package) -- " + ([.[].module_path] | join(" "))' \
+  | bash
+
+# Same idea with cargo nextest
+dokono-test --workspace . --pr "$PR" --format json \
+  | jq -r '.affected_tests[] | "-E \"test(\(.module_path))\""' \
+  | xargs cargo nextest run
 
 # Fail if a specific test is impacted
 affected=$(dokono-test --workspace . --pr "$PR" --format json | jq -r '.affected_tests[].name')
@@ -254,34 +262,7 @@ echo "$affected" | grep -q 'critical_test' && exit 1 || exit 0
 
 Exit code is `0` on success (including an empty `affected_tests` list), non-zero on error.
 
-#### `--format cargo` (runnable script)
-
-Generates `cargo test` commands grouped by package, joined with `&&`:
-
-```bash
-dokono-test --workspace . --pr 42 --format cargo
-```
-
-Output:
-
-```
-cargo test -p my-domain -- user::tests::test_user_validation && \
-cargo test -p my-app -- order::tests::test_order_create && \
-cargo test -p my-api -- health::tests::test_controller_health
-```
-
-Pipe directly to a shell:
-
-```bash
-dokono-test --workspace . --pr 42 --format cargo | bash
-```
-
-Key behaviors:
-
-- Tests are grouped by package — one `cargo test -p` invocation per package.
-- Test paths are passed as positional filters (not `--exact`), so `#[test_case]`-generated subcases that share the same prefix are also matched.
-- Arguments containing shell metacharacters are single-quoted; plain identifiers (including CJK characters) are left unquoted for readability.
-- When no tests are affected, outputs `# dokono-test: no affected tests` (a shell comment).
+`dokono-test` deliberately stops at producing the test list; the choice of runner (`cargo test`, `cargo nextest`, etc.) and any retry / parallelism policy is left to the caller.
 
 ### Diagnostic mode (debug subcommands)
 
@@ -349,7 +330,7 @@ tests/support/mod.rs        # test helpers (discovered but not counted as test g
 crates/foo/src/lib.rs       # workspace member
 ```
 
-Package names are resolved via `cargo metadata` (using `PackageMap`), which maps each source file to its owning package. This is needed for the `--format cargo` output to produce correct `cargo test -p <package>` commands.
+Package names are resolved via `cargo metadata` (using `PackageMap`), which maps each source file to its owning package. They appear in both the text output (`<package> :: <test_name>`) and the JSON `package` field so callers can group tests for `cargo test -p <package>` or `cargo nextest --partition <...>`.
 
 ## Requirements
 
@@ -412,10 +393,9 @@ RUSTUP_TOOLCHAIN=stable dokono-test --pr 42 ...
 
 **`matcher`** — Takes the BFS result (`ParentMap` + `entry_hits`) from `dokono-core` and the test function index from `test_goals`. Checks whether any BFS-visited position falls inside a test function's `body_range`. Constructs `AffectedTest` entries with package name, file path, test name, module path, and line number. Uses `PackageMap` (loaded from `cargo metadata`) to map files to package names.
 
-**`output`** — Formats the affected test set for display. Three modes:
+**`output`** — Formats the affected test set for display. Two modes:
 - `text`: human-readable one-per-line format to stdout.
 - `json`: a structured JSON object with `stats` (total, affected, reduction percentage) for CI consumption.
-- `cargo`: shell-runnable `cargo test` commands grouped by package.
 
 ## License
 

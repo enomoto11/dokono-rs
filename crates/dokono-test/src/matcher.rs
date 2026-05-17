@@ -15,12 +15,12 @@ pub struct AffectedTest {
     pub package: String,
     pub file: PathBuf,
     pub name: String,
-    /// `<crate>::<file::components>::<mod>::<name>` — for display / JSON.
+    /// `<crate>::<file::components>::<mod>::<name>` — for display / JSON output.
+    /// Built from file path relative to the crate root (dropping `src/` and a
+    /// terminal `lib`/`main` filename) plus the chain of inline `mod` names
+    /// enclosing the function. Not a fully resolved module path — external
+    /// `mod foo;` declarations are not followed.
     pub module_path: String,
-    /// `<file::components>::<mod>::<name>` — the path `cargo test -p PKG` matches
-    /// against. Omits the crate ident because cargo's filter operates on the
-    /// `-p`-selected target's symbol tree.
-    pub test_path: String,
     /// 1-based line of the function body opening brace.
     pub line: u32,
 }
@@ -75,12 +75,9 @@ fn make_affected(t: &TestFn, packages: &PackageMap, workspace: &Path) -> Affecte
         .unwrap_or("<unknown>")
         .to_string();
     let crate_root = packages.root_for(&t.file).unwrap_or(workspace);
-    let test_path = test_path_for(t, crate_root);
-    let crate_ident = package.replace('-', "_");
-    let module_path = format!("{crate_ident}::{test_path}");
+    let module_path = module_path_for(t, &package, crate_root);
     AffectedTest {
         module_path,
-        test_path,
         package,
         file: t.file.clone(),
         name: t.name.clone(),
@@ -88,14 +85,13 @@ fn make_affected(t: &TestFn, packages: &PackageMap, workspace: &Path) -> Affecte
     }
 }
 
-/// Compose the cargo-recognized test path: `<file_segs>::<mod_segs>::<name>`.
+/// Compose a display module path: `<crate>::<file_segs>::<mod_segs>::<name>`.
 /// File-derived segments come from the source file's path relative to the
 /// crate root with the conventional `src/` prefix and `lib`/`main` filename
-/// stripped. Inline `mod` names from the test function's enclosing modules
-/// are appended. Matches what `cargo test --list` prints, so substring-feeding
-/// it back to `cargo test` reliably picks the same item (and any
-/// `#[test_case]`-generated subcases that share the same prefix).
-fn test_path_for(t: &TestFn, crate_root: &Path) -> String {
+/// stripped. Inline `mod` names from the function's enclosing modules are
+/// appended. Hyphens in the package name become underscores so the result
+/// reads as a valid Rust path.
+fn module_path_for(t: &TestFn, package: &str, crate_root: &Path) -> String {
     let rel = t.file.strip_prefix(crate_root).unwrap_or(&t.file);
     let mut segs: Vec<String> = rel
         .components()
@@ -117,7 +113,8 @@ fn test_path_for(t: &TestFn, crate_root: &Path) -> String {
     }
     segs.extend(t.mod_path.iter().cloned());
     segs.push(t.name.clone());
-    segs.join("::")
+    let crate_ident = package.replace('-', "_");
+    format!("{crate_ident}::{}", segs.join("::"))
 }
 
 #[derive(Debug, Clone, Default)]
