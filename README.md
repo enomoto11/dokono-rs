@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../../assets/dokono-rs-logo.png" alt="dokono-rs" width="100%">
+  <img src="./assets/dokono-rs-logo.png" alt="dokono-rs" width="100%">
 </p>
 
 # dokono-rs
