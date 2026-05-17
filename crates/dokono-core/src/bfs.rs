@@ -69,6 +69,11 @@ pub type ParentMap = HashMap<(PathBuf, Position), Option<(PathBuf, Position)>>;
 pub struct BfsResult {
     pub affected: BTreeSet<PathBuf>,
     pub parents: ParentMap,
+    /// References that landed inside an entrypoint file, recorded with the
+    /// 0-based LSP position at which the reference appeared. `run()` discards
+    /// this; consumers that need position-level resolution inside an entrypoint
+    /// (e.g. dokono-test mapping a hit to its enclosing test function) read it.
+    pub entry_hits: HashMap<PathBuf, Vec<Position>>,
 }
 
 pub fn run(
@@ -105,6 +110,7 @@ fn run_upward(
     let mut affected: BTreeSet<PathBuf> = BTreeSet::new();
     let mut symbol_cache: HashMap<PathBuf, Vec<DocumentSymbol>> = HashMap::new();
     let mut parents: ParentMap = HashMap::new();
+    let mut entry_hits: HashMap<PathBuf, Vec<Position>> = HashMap::new();
     for s in &starts {
         parents.entry(s.clone()).or_insert(None);
     }
@@ -189,6 +195,10 @@ fn run_upward(
                 if entrypoints.contains(&r.path) {
                     tracing::debug!("bfs: ref → entrypoint {}", r.path.display());
                     affected.insert(r.path.clone());
+                    entry_hits
+                        .entry(r.path.clone())
+                        .or_default()
+                        .push(r.range.start);
                     continue;
                 }
                 let syms = symbol_cache
@@ -222,7 +232,11 @@ fn run_upward(
         }
         frontier = next;
     }
-    Ok(BfsResult { affected, parents })
+    Ok(BfsResult {
+        affected,
+        parents,
+        entry_hits,
+    })
 }
 
 #[cfg(test)]

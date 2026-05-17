@@ -23,30 +23,38 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Verify tag matches workspace version
+      - name: Verify tag matches every publishable crate version
         run: |
           set -e
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          for pkg in dokono-core dokono-rs; do
-            V=$(cargo metadata --format-version 1 --no-deps \
-              | jq -r ".packages[] | select(.name == \"$pkg\") | .version")
-            if [ "$TAG_VERSION" != "$V" ]; then
-              echo "::error::Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match $pkg version $V"
-              exit 1
+          META=$(cargo metadata --format-version 1 --no-deps)
+          FAIL=0
+          while read -r line; do
+            name=${line%% *}
+            version=${line##* }
+            if [ "$TAG_VERSION" != "$version" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME ($TAG_VERSION) does not match $name version $version"
+              FAIL=1
             fi
-          done
+          done < <(echo "$META" | jq -r '.packages[] | select(.publish == null or (.publish | length) > 0) | "\(.name) \(.version)"')
+          [ $FAIL -eq 0 ] || exit 1
           echo "Tag and manifests match: $TAG_VERSION"
 
-      - name: Verify dokono-rs depends on the same dokono-core version
+      - name: Verify every in-workspace dokono-core dep matches the tag
         run: |
           set -e
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          DEP_VERSION=$(cargo metadata --format-version 1 --no-deps \
-            | jq -r '.packages[] | select(.name == "dokono-rs") | .dependencies[] | select(.name == "dokono-core") | .req')
-          if [ "$DEP_VERSION" != "^$TAG_VERSION" ] && [ "$DEP_VERSION" != "=$TAG_VERSION" ] && [ "$DEP_VERSION" != "$TAG_VERSION" ]; then
-            echo "::error::dokono-rs depends on dokono-core $DEP_VERSION but tag is $TAG_VERSION"
-            exit 1
-          fi
+          FAIL=0
+          while read -r line; do
+            consumer=${line%% *}
+            req=${line##* }
+            if [ "$req" != "^$TAG_VERSION" ] && [ "$req" != "=$TAG_VERSION" ] && [ "$req" != "$TAG_VERSION" ]; then
+              echo "::error::$consumer depends on dokono-core $req but tag is $TAG_VERSION"
+              FAIL=1
+            fi
+          done < <(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | . as $p | .dependencies[] | select(.name == "dokono-core") | "\($p.name) \(.req)"')
+          [ $FAIL -eq 0 ] || exit 1
 
       - name: Run tests
         run: cargo test --all-targets --locked
@@ -71,10 +79,17 @@ jobs:
           echo "::error::dokono-core $TAG_VERSION did not appear in the index after 5 min"
           exit 1
 
-      - name: Publish dokono-rs
+      - name: Publish remaining crates
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish -p dokono-rs --locked
+        run: |
+          set -e
+          PKGS=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name != "dokono-core") | select(.publish == null or (.publish | length) > 0) | .name')
+          for pkg in $PKGS; do
+            echo ">>> publishing $pkg"
+            cargo publish -p "$pkg" --locked
+          done
 
       - name: Create GitHub Release
         env:
