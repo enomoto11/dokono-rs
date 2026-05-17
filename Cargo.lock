@@ -466,6 +466,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "dokono-test"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "cargo_metadata",
+ "clap",
+ "dokono-core",
+ "indicatif",
+ "lsp-types",
+ "proc-macro2",
+ "serde",
+ "serde_json",
+ "syn",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

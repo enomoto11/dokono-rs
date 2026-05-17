@@ -30,15 +30,20 @@ fi
 
 echo "bumping $CURRENT -> $NEW"
 
-# Anchor on the line we want so we don't touch any other "version = ..." string.
+# Workspace.package version; each crate inherits via `version.workspace = true`.
 sed -i.bak -E "s/^version = \"$CURRENT\"$/version = \"$NEW\"/" Cargo.toml
 rm Cargo.toml.bak
 
-# Only touches the dokono-core dep line; other deps' versions are left alone.
-sed -i.bak -E "s|(dokono-core = \\{[^}]*version = )\"$CURRENT\"|\\1\"$NEW\"|" crates/dokono-rs/Cargo.toml
-rm crates/dokono-rs/Cargo.toml.bak
+# Rewrite intra-workspace `dokono-* = { path = "...", version = "X" }` deps in every crate,
+# so adding a new dokono-* crate doesn't require touching this script.
+TOUCHED=(Cargo.toml)
+for cargo in crates/*/Cargo.toml; do
+  sed -i.bak -E "s|(dokono-[a-z0-9_-]+ = \\{[^}]*version = )\"$CURRENT\"|\\1\"$NEW\"|g" "$cargo"
+  rm "$cargo.bak"
+  TOUCHED+=("$cargo")
+done
 
-if git diff --quiet Cargo.toml crates/dokono-rs/Cargo.toml; then
+if git diff --quiet "${TOUCHED[@]}"; then
   echo "error: no changes were made — check the version pattern in Cargo.toml files" >&2
   exit 1
 fi
