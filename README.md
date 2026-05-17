@@ -18,7 +18,7 @@ None of these tools invoke `cargo build` or `--emit=dep-info`. Each one traces r
 |---|---|---|---|
 | [`dokono-rs`](crates/dokono-rs/) | CLI (`dokono`) | [![Crates.io](https://img.shields.io/crates/v/dokono-rs.svg)](https://crates.io/crates/dokono-rs) | Which **binary entrypoints** are affected by a change? |
 | [`dokono-test`](crates/dokono-test/) | CLI (`dokono-test`) | [![Crates.io](https://img.shields.io/crates/v/dokono-test.svg)](https://crates.io/crates/dokono-test) | Which **test functions** are affected by a change? |
-| [`dokono-core`](crates/dokono-core/) | Internal library | [![Crates.io](https://img.shields.io/crates/v/dokono-core.svg)] | Shared LSP client, BFS engine, git-diff parsing, and `cargo metadata` plumbing used by the CLIs above. API is unstable. |
+| [`dokono-core`](crates/dokono-core/) | Internal library | [![Crates.io](https://img.shields.io/crates/v/dokono-core.svg)](https://crates.io/crates/dokono-core) | Shared LSP client, BFS engine, git-diff parsing, and `cargo metadata` plumbing used by the CLIs above. API is unstable. |
 
 Each CLI has its own README with motivation, installation, full usage, and troubleshooting — start there if you want to use one of the tools.
 
