@@ -33,7 +33,7 @@ All CLIs follow the same pipeline, implemented once in [`dokono-core`](crates/do
    - `dokono-rs` → bin entrypoint paths from `cargo metadata`
    - `dokono-test` → `#[test]` / `#[tokio::test]` / ... bodies discovered by `syn`
 
-Readiness is detected deterministically by waiting for an `experimental/serverStatus` notification with `quiescent: true` — no fixed sleeps, no bounded retry counts.
+Readiness is detected deterministically by waiting for an `experimental/serverStatus` notification with `quiescent: true` — no fixed sleeps. The one bounded wait is a 30-second cap on the retry that follows a `-32801 ContentModified` response, so a single non-quiescing request cannot stall the whole BFS; the offending request is skipped and the traversal continues.
 
 ## Why this trade-off
 
