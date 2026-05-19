@@ -8,11 +8,13 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use cli::{Cli, Command, DebugCmd};
-use dokono_core::bfs::{self, LspBackend};
+use dokono_core::bfs::{self, BfsDirection, BfsResult, LspBackend, ParentMap};
 use dokono_core::git;
 use dokono_core::lsp::backend::Backend;
 use dokono_core::lsp::{client, lifecycle, progress};
+use dokono_core::types::Position;
 use output::{Reporter, Status, Summary};
+use std::collections::HashMap;
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -123,7 +125,11 @@ fn run_default(cli: Cli) -> Result<()> {
     }
 
     reporter.phase("tracing references (BFS) ...");
-    let affected = bfs::run(&mut backend, starts, &entrypoints)?;
+    let BfsResult {
+        affected,
+        parents,
+        entry_hits,
+    } = bfs::run_with_parents(&mut backend, starts, &entrypoints, BfsDirection::Upward)?;
 
     lifecycle::shutdown(&mut client)?;
     reporter.finish();
@@ -147,7 +153,67 @@ fn run_default(cli: Cli) -> Result<()> {
             status: Status::Ok,
             affected: affected_rel,
         },
-    )
+    )?;
+
+    if cli.explain {
+        print_traces(&entry_hits, &parents, &workspace);
+    }
+
+    Ok(())
+}
+
+fn print_traces(
+    entry_hits: &HashMap<PathBuf, Vec<Position>>,
+    parents: &ParentMap,
+    workspace: &PathBuf,
+) {
+    eprintln!();
+    eprintln!("BFS trace per affected entrypoint:");
+    let mut sorted: Vec<_> = entry_hits.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    for (entry, positions) in sorted {
+        let rel = entry.strip_prefix(workspace).unwrap_or(entry);
+        eprintln!("  {}", rel.display());
+        let mut seen_paths: std::collections::HashSet<Vec<(PathBuf, Position)>> =
+            std::collections::HashSet::new();
+        for pos in positions {
+            let chain = walk_parents(parents, (entry.clone(), *pos));
+            if !seen_paths.insert(chain.clone()) {
+                continue;
+            }
+            eprintln!("    ref at line {} col {}", pos.line + 1, pos.character + 1);
+            for (i, (f, p)) in chain.iter().enumerate() {
+                let r = f.strip_prefix(workspace).unwrap_or(f);
+                let arrow = if i == chain.len() - 1 {
+                    "       └─ start"
+                } else {
+                    "       ←"
+                };
+                eprintln!(
+                    "{} {}:{}:{}",
+                    arrow,
+                    r.display(),
+                    p.line + 1,
+                    p.character + 1
+                );
+            }
+        }
+    }
+}
+
+fn walk_parents(parents: &ParentMap, start: (PathBuf, Position)) -> Vec<(PathBuf, Position)> {
+    let mut chain = Vec::new();
+    let mut current = parents.get(&start).cloned().flatten();
+    let mut guard = 0;
+    while let Some(p) = current {
+        chain.push(p.clone());
+        guard += 1;
+        if guard > 100 {
+            break;
+        }
+        current = parents.get(&p).cloned().flatten();
+    }
+    chain
 }
 
 fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
@@ -182,5 +248,10 @@ fn run_debug(workspace: &std::path::Path, cmd: DebugCmd) -> Result<()> {
             line,
             character,
         } => debug::references(workspace, &file, line, character),
+        DebugCmd::Declaration {
+            file,
+            line,
+            character,
+        } => debug::declaration(workspace, &file, line, character),
     }
 }

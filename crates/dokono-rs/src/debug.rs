@@ -4,13 +4,19 @@
 //! stay independent of the LSP wire types.
 
 use anyhow::{Context, Result};
-use lsp_types::request::{DocumentSymbolRequest, References};
-use lsp_types::{DocumentSymbolResponse, Location, Position};
+use lsp_types::request::{
+    DocumentSymbolRequest, GotoDeclaration, GotoDeclarationParams, GotoDeclarationResponse,
+    References,
+};
+use lsp_types::{
+    DocumentSymbolResponse, Location, PartialResultParams, Position, TextDocumentIdentifier,
+    TextDocumentPositionParams, WorkDoneProgressParams,
+};
 use std::path::Path;
 use std::time::Instant;
 
 use dokono_core::lsp::backend::{
-    document_symbol_params, open_document, parse_document_symbols, references_params,
+    document_symbol_params, file_uri, open_document, parse_document_symbols, references_params,
 };
 use dokono_core::lsp::{client::Client, lifecycle, progress};
 use dokono_core::symbols;
@@ -121,6 +127,76 @@ pub fn references(workspace: &Path, file: &Path, line: u32, character: u32) -> R
 
     lifecycle::shutdown(&mut client)?;
     Ok(())
+}
+
+pub fn declaration(workspace: &Path, file: &Path, line: u32, character: u32) -> Result<()> {
+    let file_abs = workspace
+        .join(file)
+        .canonicalize()
+        .with_context(|| format!("file not found: {}", file.display()))?;
+
+    let mut client = bootstrap_client(workspace)?;
+    open_document(&client, &file_abs)?;
+
+    let pos = Position { line, character };
+    let params = GotoDeclarationParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: file_uri(&file_abs)?,
+            },
+            position: pos,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+    let response: Option<GotoDeclarationResponse> = client.request::<GotoDeclaration>(params)?;
+
+    println!("input: {}:{}:{}", file.display(), line, character);
+    match response {
+        None => println!("declaration: (none)"),
+        Some(GotoDeclarationResponse::Scalar(loc)) => print_loc("scalar", &loc),
+        Some(GotoDeclarationResponse::Array(locs)) => {
+            println!("declaration: array ({} items)", locs.len());
+            for loc in &locs {
+                print_loc("  array", loc);
+            }
+        }
+        Some(GotoDeclarationResponse::Link(links)) => {
+            println!("declaration: link ({} items)", links.len());
+            for link in &links {
+                let path = link
+                    .target_uri
+                    .to_file_path()
+                    .ok()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| link.target_uri.to_string());
+                println!(
+                    "  link: {}:{}:{} (selection {}:{})",
+                    path,
+                    link.target_range.start.line,
+                    link.target_range.start.character,
+                    link.target_selection_range.start.line,
+                    link.target_selection_range.start.character,
+                );
+            }
+        }
+    }
+
+    lifecycle::shutdown(&mut client)?;
+    Ok(())
+}
+
+fn print_loc(tag: &str, loc: &Location) {
+    let path = loc
+        .uri
+        .to_file_path()
+        .ok()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| loc.uri.to_string());
+    println!(
+        "declaration: {tag} {}:{}:{}",
+        path, loc.range.start.line, loc.range.start.character
+    );
 }
 
 fn bootstrap_client(workspace: &Path) -> Result<Client> {
