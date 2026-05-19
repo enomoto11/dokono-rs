@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Internal library for dokono-rs and sibling tools. Drives rust-analyzer over LSP to do symbol-level reachability analysis."
+description = "Internal library for the dokono workspace. Drives rust-analyzer over LSP to do symbol-level reachability analysis."
 readme = "README.md"
+
+[dev-dependencies]
+tempfile = "3"
 
 [dependencies]
 anyhow = "1"
