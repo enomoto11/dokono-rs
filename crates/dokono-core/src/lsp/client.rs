@@ -249,13 +249,35 @@ where
     R::Params: Clone + Send + 'static,
     R::Result: Send + 'static,
 {
+    let started = std::time::Instant::now();
     loop {
         let gen_before = quiescent_rx.borrow().generation;
         match server.request::<R>(params.clone()).await {
             Ok(value) => return Ok(value),
             Err(async_lsp::Error::Response(resp)) if resp.code == ErrorCode::CONTENT_MODIFIED => {
-                wait_for_quiescent_after_async(quiescent_rx, gen_before).await?;
-                continue;
+                let wait = tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    wait_for_quiescent_after_async(quiescent_rx, gen_before),
+                )
+                .await;
+                match wait {
+                    Ok(Ok(_)) => continue,
+                    Ok(Err(e)) => return Err(e),
+                    Err(_) => {
+                        // RA kept returning ContentModified without re-quiescing → would
+                        // otherwise loop forever. Bail with a code=-32603 marker so the
+                        // batch caller's `is_lsp_internal_error` catches and skips it.
+                        tracing::warn!(
+                            "LSP request `{}` stalled: ContentModified without re-quiesce (elapsed={:.2?}); giving up",
+                            R::METHOD,
+                            started.elapsed()
+                        );
+                        bail!(
+                            "LSP request `{}` stalled: server kept returning ContentModified (code=-32603 equivalent) without re-quiescing",
+                            R::METHOD,
+                        );
+                    }
+                }
             }
             Err(async_lsp::Error::Response(resp)) => {
                 bail!(

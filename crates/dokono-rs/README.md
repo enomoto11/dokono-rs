@@ -22,6 +22,7 @@ Contents:
   - [Inspect the impact of a PR](#inspect-the-impact-of-a-pr)
   - [Compare two arbitrary git refs](#compare-two-arbitrary-git-refs)
   - [Output](#output)
+  - [Explain why an entrypoint was flagged (`--explain`)](#explain-why-an-entrypoint-was-flagged---explain)
   - [Diagnostic mode (`debug` subcommand)](#diagnostic-mode-debug-subcommand)
 - [Supported project layouts](#supported-project-layouts)
 - [Requirements](#requirements)
@@ -62,7 +63,7 @@ Key points:
 - `textDocument/references` returns "references to the symbol at a given position." On every BFS step we re-query `documentSymbol` to convert **"reference site → declaration position of the enclosing function"**, which is what lets us walk *upward* through call chains.
 - Trait dispatch through `Arc<dyn Trait>` is captured by sending `textDocument/declaration` first to normalize **impl method → trait method declaration**.
 - A `visited` set keeps the BFS terminating in the presence of cycles.
-- Readiness is detected deterministically by waiting for an `experimental/serverStatus` notification with `quiescent: true`. There are no fixed sleeps or bounded retry counts.
+- Readiness is detected deterministically by waiting for an `experimental/serverStatus` notification with `quiescent: true`. There are no fixed sleeps. The one bounded wait is a 30-second cap on the retry that follows a `-32801 ContentModified` response, so a single non-quiescing request cannot stall the whole BFS; the offending request is skipped (logged at `warn` level) and the traversal continues.
 
 ## Installation
 
@@ -177,11 +178,9 @@ dokono --workspace . --pr 1062 --format json
 
 ```json
 {
-  "schema_version": 1,
   "pr": 1062,
   "base": "abc123def456...",
   "head": "dokono-pr-1062",
-  "status": "ok",
   "affected": [
     "services/src/bin/api.rs",
     "services/src/bin/worker.rs"
@@ -191,10 +190,8 @@ dokono --workspace . --pr 1062 --format json
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | int | currently `1`. Bumped on incompatible schema changes. |
 | `pr` | int \| null | PR number when invoked with `--pr`, otherwise `null`. |
 | `base` / `head` | string | git refs as resolved by `dokono-rs` (in `--pr` mode `base` is the merge-base SHA and `head` is the local fetched ref). |
-| `status` | enum | `ok` \| `no_rs_changes` \| `no_symbol_changes` |
 | `affected` | string[] | workspace-relative paths, sorted. Empty unless `status == "ok"`. |
 
 Example CI snippet:
@@ -206,6 +203,29 @@ echo "$affected" | grep -q '^services/src/bin/api\.rs$' && exit 1 || exit 0
 ```
 
 Exit code is `0` on success (including an empty `affected` list), non-zero on error.
+
+### Explain why an entrypoint was flagged (`--explain`)
+
+When an unexpected entrypoint appears in the result, pass `--explain` to print the BFS path from each affected entrypoint back to its originating changed symbol. The trace goes to **stderr** (text mode only), so the stdout result is unchanged and remains parseable.
+
+```bash
+dokono --workspace /path/to/your-workspace --pr 1062 --explain
+```
+
+Output appended on stderr after the normal phase logs:
+
+```
+BFS trace per affected entrypoint:
+  services/src/bin/api.rs
+    ref at line 42 col 13
+       ← services/src/controller/foo.rs:30:14
+       ← services/src/usecase/bar.rs:55:10
+       └─ start domain/src/model/baz.rs:12:7
+```
+
+Reading bottom-up: a symbol at `baz.rs:12:7` was modified, references walk up through `bar.rs` → `foo.rs` → into the bin at line 42. Duplicate paths to the same entrypoint are de-duplicated.
+
+`--explain` only emits output in text mode; with `--format json` the flag is a no-op (the JSON schema is unchanged so existing consumers do not break).
 
 ### Diagnostic mode (`debug` subcommand)
 
@@ -231,6 +251,12 @@ dokono debug symbols --workspace /path/to/your-workspace \
 
 # References at a specific position (--line / --char are 0-based, matching documentSymbol output)
 dokono debug references --workspace /path/to/your-workspace \
+    --file domain/src/model/foo.rs --line 12 --char 11
+
+# Declaration target for a position (used internally to normalize impl → trait method).
+# Handy when investigating BFS over-attribution: if the position lands on a module path or
+# trait header, declaration shows where rust-analyzer thinks the symbol is defined.
+dokono debug declaration --workspace /path/to/your-workspace \
     --file domain/src/model/foo.rs --line 12 --char 11
 ```
 
@@ -310,7 +336,13 @@ RUSTUP_TOOLCHAIN=stable dokono --pr 1062 ...
 
 ### Frequent `-32801 ContentModified`
 
-`dokono-rs` retries internally, so this normally does not surface to the user. If it does cause a hard failure, rust-analyzer's state may be unstable — set `RUST_LOG=dokono=debug` and check the `experimental/serverStatus` transitions.
+`dokono-rs` retries internally by waiting for the next `quiescent: true` notification. If rust-analyzer never re-quiesces within 30 seconds (observed on some PRs that also panic rust-analyzer's reference handler with `-32603` on `try_from` impls and similar generic-heavy code), the retry is capped and the offending request is skipped with a `warn`-level log:
+
+```
+WARN dokono_core::lsp::client: LSP request `textDocument/references` stalled: ContentModified without re-quiesce (elapsed=30.0s); giving up
+```
+
+The skipped request loses its contribution to the BFS, but the overall traversal continues and the rest of the result is still computed. If you see this often on a specific workspace, set `RUST_LOG=dokono_core=debug` and check the `experimental/serverStatus` transitions to confirm whether the underlying issue is in rust-analyzer or in `dokono-rs`'s retry logic.
 
 ## License
 

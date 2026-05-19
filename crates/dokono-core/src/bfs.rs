@@ -115,7 +115,11 @@ fn run_upward(
         parents.entry(s.clone()).or_insert(None);
     }
 
+    let mut wave: u32 = 0;
     while !frontier.is_empty() {
+        wave += 1;
+        let wave_started = std::time::Instant::now();
+        let frontier_size = frontier.len();
         let mut nodes: Vec<(PathBuf, Position)> = Vec::with_capacity(frontier.len());
         for n in frontier.drain(..) {
             if visited.insert(n.clone()) {
@@ -125,6 +129,13 @@ fn run_upward(
         if nodes.is_empty() {
             break;
         }
+        tracing::info!(
+            "bfs: wave={} frontier={} unique_nodes={} visited_total={}",
+            wave,
+            frontier_size,
+            nodes.len(),
+            visited.len()
+        );
 
         for (f, p) in &nodes {
             tracing::debug!("bfs: visit {} @ ({},{})", f.display(), p.line, p.character);
@@ -134,7 +145,9 @@ fn run_upward(
             backend.open(file)?;
         }
 
+        let t_decl = std::time::Instant::now();
         let canonicals = backend.declarations_batch(&nodes)?;
+        let decl_elapsed = t_decl.elapsed();
 
         let mut canonical_to_query: Vec<(PathBuf, Position)> = Vec::with_capacity(nodes.len());
         for (orig, canon) in nodes.iter().zip(canonicals) {
@@ -162,7 +175,20 @@ fn run_upward(
             continue;
         }
 
+        let t_refs = std::time::Instant::now();
         let all_refs = backend.references_batch(&canonical_to_query)?;
+        let refs_elapsed = t_refs.elapsed();
+        let total_refs: usize = all_refs.iter().map(|v| v.len()).sum();
+        let max_refs = all_refs.iter().map(|v| v.len()).max().unwrap_or(0);
+        tracing::info!(
+            "bfs: wave={} queried={} decl={:.2?} refs={:.2?} total_ref_hits={} max_ref_hits={}",
+            wave,
+            canonical_to_query.len(),
+            decl_elapsed,
+            refs_elapsed,
+            total_refs,
+            max_refs
+        );
 
         let mut to_query: Vec<PathBuf> = Vec::new();
         let mut seen: HashSet<PathBuf> = HashSet::new();
@@ -195,6 +221,10 @@ fn run_upward(
                 if entrypoints.contains(&r.path) {
                     tracing::debug!("bfs: ref → entrypoint {}", r.path.display());
                     affected.insert(r.path.clone());
+                    let entry_key = (r.path.clone(), r.range.start);
+                    parents
+                        .entry(entry_key)
+                        .or_insert_with(|| Some(parent.clone()));
                     entry_hits
                         .entry(r.path.clone())
                         .or_default()
@@ -230,6 +260,12 @@ fn run_upward(
                 }
             }
         }
+        tracing::info!(
+            "bfs: wave={} next_queue={} wave_elapsed={:.2?}",
+            wave,
+            next.len(),
+            wave_started.elapsed()
+        );
         frontier = next;
     }
     Ok(BfsResult {

@@ -31,6 +31,11 @@ pub struct Cli {
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 
+    /// Print the BFS path from each affected entrypoint back to its originating
+    /// changed symbol (text mode only). Useful for diagnosing surprising hits.
+    #[arg(long)]
+    pub explain: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -74,6 +79,15 @@ pub enum DebugCmd {
     },
     /// Print references for a given (file, line, character). `--line` and `--char` are 0-based.
     References {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        line: u32,
+        #[arg(long = "char")]
+        character: u32,
+    },
+    /// Print the declaration target for a given (file, line, character). `--line` and `--char` are 0-based.
+    Declaration {
         #[arg(long)]
         file: PathBuf,
         #[arg(long)]
