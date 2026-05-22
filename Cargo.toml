@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/dokono-core", "crates/dokono-rs", "crates/dokono-test"]
+members = ["crates/dokono-core", "crates/dokono-cve", "crates/dokono-rs", "crates/dokono-test"]
 
 [workspace.package]
 version = "0.6.3"

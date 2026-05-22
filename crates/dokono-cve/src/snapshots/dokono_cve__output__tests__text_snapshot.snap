@@ -1,0 +1,21 @@
+---
+source: crates/dokono-cve/src/output.rs
+assertion_line: 322
+expression: out
+---
+Workspace: /work (3 bins)
+
+RUSTSEC-2025-0022  openssl  openssl::md::Md::fetch
+  seed: /cargo/registry/src/index.crates.io/openssl-0.10.68/src/md.rs:99:12
+  REACHABLE
+    bin/a.rs
+  REACHABLE FROM TESTS ONLY
+    bin/b.rs
+  NOT REACHABLE
+    bin/c.rs
+
+Unresolved seeds:
+  (direct)  ghost::foo  (no_dependency)
+
+Unsupported advisories (no affected.functions in DB):
+  RUSTSEC-2099-0001  hyper

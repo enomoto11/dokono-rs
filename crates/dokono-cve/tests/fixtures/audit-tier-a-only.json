@@ -1,0 +1,57 @@
+{
+  "database": {
+    "advisory-count": 1,
+    "last-commit": null,
+    "last-updated": null
+  },
+  "lockfile": {
+    "dependency-count": 1
+  },
+  "settings": {
+    "target_arch": [],
+    "target_os": [],
+    "severity": null,
+    "ignore": [],
+    "informational_warnings": []
+  },
+  "vulnerabilities": {
+    "found": true,
+    "count": 1,
+    "list": [
+      {
+        "advisory": {
+          "id": "RUSTSEC-2025-0022",
+          "package": "openssl",
+          "title": "fixture",
+          "description": "fixture",
+          "date": "2025-04-04",
+          "collection": "crates",
+          "cvss": null,
+          "informational": null,
+          "source": null,
+          "url": null,
+          "withdrawn": null
+        },
+        "versions": {
+          "patched": [">= 0.10.72"],
+          "unaffected": []
+        },
+        "affected": {
+          "arch": [],
+          "os": [],
+          "functions": {
+            "openssl::md::Md::fetch": ["< 0.10.72"]
+          }
+        },
+        "package": {
+          "name": "openssl",
+          "version": "0.10.30",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": null,
+          "dependencies": []
+        }
+      }
+    ]
+  },
+  "warnings": {}
+}
